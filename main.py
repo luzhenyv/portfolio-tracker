@@ -36,6 +36,8 @@ from services.asset_service import create_asset_with_data, print_asset_creation_
 def cmd_init(args):
     """Initialize the database."""
     db = init_db(args.db_url, if_drop=args.if_drop)
+    if args.if_drop:
+        print("⚠️ Existing tables dropped.")
     print("✅ Database initialized successfully")
     print(f"   Location: {db.db_url}")
 
