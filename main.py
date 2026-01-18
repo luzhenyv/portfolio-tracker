@@ -9,11 +9,11 @@ Usage:
     python main.py init
     
     # Add an asset
-    python main.py add-asset AAPL --status OWNED --name "Apple Inc."
+    python main.py add-asset TSLA --status OWNED --name "Tesla Inc."
     
     # Trading operations
-    python main.py buy AAPL --shares 100 --price 150.00 --date 2024-01-15
-    python main.py sell AAPL --shares 50 --price 170.00 --date 2024-06-15
+    python main.py buy TSLA --shares 100 --price 150.00 --date 2024-01-15
+    python main.py sell TSLA --shares 50 --price 170.00 --date 2024-06-15
     python main.py short TSLA --shares 20 --price 250.00 --date 2024-03-01
     python main.py cover TSLA --shares 10 --price 240.00 --date 2024-04-01
     
@@ -282,13 +282,14 @@ def main():
     init = subparsers.add_parser("init", help="Initialize database")
     init.add_argument("--db-url", help="Custom database URL", default=None)
     init.add_argument("--if-drop", action="store_true", help="Drop existing tables before creating")
-    
-    # add-position command (legacy - kept for compatibility)
-    add_pos = subparsers.add_parser("add-position", help="Add position (buy lot) - legacy")
-    add_pos.add_argument("ticker", help="Stock ticker symbol")
-    add_pos.add_argument("--shares", type=float, required=True, help="Number of shares")
-    add_pos.add_argument("--price", type=float, required=True, help="Buy price per share")
-    add_pos.add_argument("--date", help="Buy date (YYYY-MM-DD)")
+
+    # add-asset command
+    add_asset = subparsers.add_parser("add-asset", help="Add asset to track")
+    add_asset.add_argument("ticker", help="Stock ticker symbol")
+    add_asset.add_argument("--status", choices=["OWNED", "WATCHLIST"], default="WATCHLIST")
+    add_asset.add_argument("--name", help="Company name")
+    add_asset.add_argument("--sector", help="Sector")
+    add_asset.add_argument("--exchange", help="Exchange")
     
     # buy command
     buy = subparsers.add_parser("buy", help="Buy shares (long position)")
