@@ -1,132 +1,349 @@
+"""
+Streamlit Dashboard for Portfolio Review.
+
+FR-13: Built using Streamlit, local execution only
+FR-14: Read-only, executive-style, calm layout
+FR-15: Portfolio Overview, Positions Detail, Watchlist/Valuation View
+"""
+
 import streamlit as st
 import pandas as pd
 
+from db import init_db
 from analytics.portfolio import compute_portfolio
 from analytics.risk import compute_risk_metrics
-from decision.engine import decision_engine
 from analytics.valuation import run_valuation
+from analytics.performance import get_period_returns
+from decision.engine import decision_engine
 
-st.set_page_config(
-    page_title="Portfolio Review",
-    layout="wide"
-)
 
-st.title("📊 Portfolio Review Dashboard")
+# Initialize database on app start
+init_db()
 
-page = st.sidebar.selectbox(
-    "Navigation",
-    ["Overview", "Positions", "Watchlist"]
-)
 
-# ======================
-# OVERVIEW
-# ======================
-if page == "Overview":
+def configure_page():
+    """Configure Streamlit page settings."""
+    st.set_page_config(
+        page_title="Portfolio Review",
+        page_icon="📊",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+
+def render_sidebar() -> str:
+    """Render sidebar navigation and return selected page."""
+    st.sidebar.title("📊 Portfolio Tracker")
+    st.sidebar.markdown("---")
+    
+    page = st.sidebar.radio(
+        "Navigation",
+        ["Overview", "Positions", "Watchlist"],
+        label_visibility="collapsed",
+    )
+    
+    st.sidebar.markdown("---")
+    st.sidebar.caption("💡 Read-only dashboard")
+    st.sidebar.caption("📅 Data: End-of-day prices")
+    
+    return page
+
+
+def format_currency(value: float) -> str:
+    """Format value as currency."""
+    return f"${value:,.0f}"
+
+
+def format_percentage(value: float, decimals: int = 1) -> str:
+    """Format value as percentage."""
+    return f"{value:.{decimals}%}"
+
+
+def render_overview_page():
+    """
+    Render Portfolio Overview page.
+    
+    Shows:
+    - Portfolio summary metrics
+    - Risk metrics
+    - Decision summary
+    """
     st.header("📌 Portfolio Overview")
-
-    portfolio_df, summary = compute_portfolio()
-    risk = compute_risk_metrics()
-    decisions = decision_engine()
-
-    col1, col2, col3 = st.columns(3)
-
+    
+    try:
+        portfolio_df, summary = compute_portfolio()
+        risk = compute_risk_metrics()
+        decisions = decision_engine()
+    except ValueError as e:
+        st.warning(f"⚠️ {e}")
+        st.info("Add positions to see portfolio analytics.")
+        return
+    except Exception as e:
+        st.error(f"Error loading portfolio data: {e}")
+        return
+    
+    # Portfolio Value Metrics
+    st.subheader("💰 Portfolio Value")
+    col1, col2, col3, col4 = st.columns(4)
+    
     col1.metric(
         "Total Cost",
-        f"${summary['total_cost']:,.0f}"
+        format_currency(summary["total_cost"]),
     )
     col2.metric(
         "Market Value",
-        f"${summary['total_market_value']:,.0f}"
+        format_currency(summary["total_market_value"]),
     )
     col3.metric(
         "Unrealized P&L",
-        f"${summary['total_pnl']:,.0f}",
-        f"{summary['total_pnl_pct']:.1%}"
+        format_currency(summary["total_pnl"]),
+        format_percentage(summary["total_pnl_pct"]),
     )
-
-    st.divider()
-
-    col4, col5 = st.columns(2)
     col4.metric(
-        "Portfolio Volatility",
-        f"{risk['portfolio_volatility']:.1%}"
+        "Positions",
+        f"{len(portfolio_df)}",
     )
-    col5.metric(
-        "Max Drawdown",
-        f"{risk['portfolio_max_drawdown']:.1%}"
-    )
-
+    
     st.divider()
+    
+    # Risk Metrics
+    st.subheader("⚠️ Risk Metrics")
+    col5, col6 = st.columns(2)
+    
+    col5.metric(
+        "Portfolio Volatility (Ann.)",
+        format_percentage(risk["portfolio_volatility"]),
+        help="Annualized standard deviation of portfolio returns",
+    )
+    col6.metric(
+        "Max Drawdown",
+        format_percentage(risk["portfolio_max_drawdown"]),
+        help="Maximum peak-to-trough decline",
+    )
+    
+    # Period Returns
+    try:
+        period_returns = get_period_returns()
+        if any(v is not None for v in period_returns.values()):
+            st.divider()
+            st.subheader("📈 Period Returns")
+            return_cols = st.columns(len(period_returns))
+            for col, (period, ret) in zip(return_cols, period_returns.items()):
+                if ret is not None:
+                    col.metric(period, format_percentage(ret))
+                else:
+                    col.metric(period, "N/A")
+    except Exception:
+        pass  # Period returns are optional
+    
+    st.divider()
+    
+    # Decision Summary
     st.subheader("🧠 Decision Summary")
-    st.dataframe(
-        decisions[["ticker", "weight", "action", "reasons"]],
-        use_container_width=True
-    )
+    
+    if decisions.empty:
+        st.info("No positions to evaluate.")
+    else:
+        # Highlight actions needing attention
+        review_count = len(decisions[decisions["action"].isin(["REDUCE", "REVIEW"])])
+        
+        if review_count > 0:
+            st.warning(f"⚡ {review_count} position(s) need attention")
+        
+        # Style the dataframe
+        display_df = decisions[["ticker", "weight", "action", "reasons"]].copy()
+        display_df["weight"] = display_df["weight"].apply(lambda x: f"{x:.1%}")
+        
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "ticker": st.column_config.TextColumn("Ticker", width="small"),
+                "weight": st.column_config.TextColumn("Weight", width="small"),
+                "action": st.column_config.TextColumn("Action", width="small"),
+                "reasons": st.column_config.TextColumn("Reasons", width="large"),
+            },
+        )
 
-# ======================
-# POSITIONS
-# ======================
-elif page == "Positions":
+
+def render_positions_page():
+    """
+    Render Positions Detail page.
+    
+    Shows:
+    - Detailed position table
+    - Individual risk metrics
+    """
     st.header("📈 Owned Positions")
-
-    portfolio_df, _ = compute_portfolio()
-    risk = compute_risk_metrics()
-    decisions = decision_engine()
-
-    merged = portfolio_df.merge(
-        decisions,
-        on="ticker",
-        how="left"
-    )
-
+    
+    try:
+        portfolio_df, _ = compute_portfolio()
+        risk = compute_risk_metrics()
+        decisions = decision_engine()
+    except ValueError as e:
+        st.warning(f"⚠️ {e}")
+        return
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
+        return
+    
+    # Merge portfolio with decisions
+    if not decisions.empty:
+        merged = portfolio_df.merge(
+            decisions[["ticker", "action", "reasons"]],
+            on="ticker",
+            how="left",
+        )
+    else:
+        merged = portfolio_df.copy()
+        merged["action"] = "HOLD"
+        merged["reasons"] = ""
+    
+    # Format for display
+    display_df = merged.copy()
+    display_df["buy_price"] = display_df["buy_price"].apply(lambda x: f"${x:.2f}")
+    display_df["close"] = display_df["close"].apply(lambda x: f"${x:.2f}")
+    display_df["market_value"] = display_df["market_value"].apply(format_currency)
+    display_df["pnl"] = display_df["pnl"].apply(lambda x: f"${x:+,.0f}")
+    display_df["pnl_pct"] = display_df["pnl_pct"].apply(lambda x: f"{x:+.1%}")
+    display_df["weight"] = display_df["weight"].apply(lambda x: f"{x:.1%}")
+    
     display_cols = [
-        "ticker",
-        "shares",
-        "buy_price",
-        "close",
-        "market_value",
-        "pnl",
-        "pnl_pct",
-        "weight",
-        "action",
-        "reasons"
+        "ticker", "shares", "buy_price", "close",
+        "market_value", "pnl", "pnl_pct", "weight",
+        "action", "reasons"
     ]
-
+    
     st.dataframe(
-        merged[display_cols],
-        use_container_width=True
+        display_df[display_cols],
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "ticker": st.column_config.TextColumn("Ticker", width="small"),
+            "shares": st.column_config.NumberColumn("Shares", format="%.2f"),
+            "buy_price": st.column_config.TextColumn("Buy Price", width="small"),
+            "close": st.column_config.TextColumn("Current", width="small"),
+            "market_value": st.column_config.TextColumn("Value", width="small"),
+            "pnl": st.column_config.TextColumn("P&L", width="small"),
+            "pnl_pct": st.column_config.TextColumn("P&L %", width="small"),
+            "weight": st.column_config.TextColumn("Weight", width="small"),
+            "action": st.column_config.TextColumn("Action", width="small"),
+            "reasons": st.column_config.TextColumn("Reasons", width="medium"),
+        },
     )
-
+    
     st.caption(
-        "Weights are cost-based. Risk metrics are historical and EOD-based."
+        "💡 Weights are cost-based. Risk metrics are historical and EOD-based."
     )
+    
+    # Correlation matrix (if multiple positions)
+    if not risk["correlation"].empty and len(risk["correlation"]) > 1:
+        st.divider()
+        st.subheader("🔗 Correlation Matrix")
+        st.dataframe(
+            risk["correlation"].round(2),
+            use_container_width=True,
+        )
+        st.caption(
+            "Correlation of daily returns. Lower correlation = better diversification."
+        )
 
-# ======================
-# WATCHLIST
-# ======================
-elif page == "Watchlist":
+
+def render_watchlist_page():
+    """
+    Render Watchlist & Valuation page.
+    
+    Shows:
+    - Valuation metrics for all assets
+    - BUY/WAIT/AVOID signals
+    """
     st.header("👀 Watchlist & Valuation")
-
-    valuation_df = run_valuation()
-
+    
+    try:
+        valuation_df = run_valuation()
+    except Exception as e:
+        st.error(f"Error loading valuation data: {e}")
+        return
+    
     if valuation_df.empty:
         st.info("No valuation data available.")
-    else:
-        display_cols = [
-            "ticker",
-            "pe_forward",
-            "peg",
-            "ev_ebitda",
-            "revenue_growth",
-            "eps_growth",
-            "valuation_action"
-        ]
+        st.caption("Run the valuation fetcher to populate this view.")
+        return
+    
+    # Format for display
+    display_df = valuation_df.copy()
+    
+    # Format numeric columns
+    for col in ["pe_forward", "peg", "ev_ebitda"]:
+        if col in display_df.columns:
+            display_df[col] = display_df[col].apply(
+                lambda x: f"{x:.1f}" if pd.notna(x) else "—"
+            )
+    
+    for col in ["revenue_growth", "eps_growth"]:
+        if col in display_df.columns:
+            display_df[col] = display_df[col].apply(
+                lambda x: f"{x:.1%}" if pd.notna(x) else "—"
+            )
+    
+    display_cols = [
+        "ticker", "pe_forward", "peg", "ev_ebitda",
+        "revenue_growth", "eps_growth", "valuation_action"
+    ]
+    
+    # Color-code actions
+    def highlight_action(row):
+        action = row.get("valuation_action", "")
+        if action == "BUY":
+            return ["background-color: #d4edda"] * len(row)
+        elif action == "AVOID":
+            return ["background-color: #f8d7da"] * len(row)
+        return [""] * len(row)
+    
+    st.dataframe(
+        display_df[display_cols],
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "ticker": st.column_config.TextColumn("Ticker", width="small"),
+            "pe_forward": st.column_config.TextColumn("Fwd P/E", width="small"),
+            "peg": st.column_config.TextColumn("PEG", width="small"),
+            "ev_ebitda": st.column_config.TextColumn("EV/EBITDA", width="small"),
+            "revenue_growth": st.column_config.TextColumn("Rev Growth", width="small"),
+            "eps_growth": st.column_config.TextColumn("EPS Growth", width="small"),
+            "valuation_action": st.column_config.TextColumn("Signal", width="small"),
+        },
+    )
+    
+    # Legend
+    st.divider()
+    col1, col2, col3 = st.columns(3)
+    col1.markdown("🟢 **BUY** — Multiple metrics suggest attractive valuation")
+    col2.markdown("🟡 **WAIT** — Mixed signals, patience recommended")
+    col3.markdown("🔴 **AVOID** — Multiple metrics suggest overvaluation")
+    
+    st.caption(
+        "💡 Valuation is multiples-based (auto-fetched). "
+        "Decisions are band-based, not precise price targets."
+    )
 
-        st.dataframe(
-            valuation_df[display_cols],
-            use_container_width=True
-        )
 
-        st.caption(
-            "Valuation is multiples-based (auto-fetched). Decisions are band-based, not precise price targets."
-        )
+def main():
+    """Main application entry point."""
+    configure_page()
+    
+    # Render navigation
+    page = render_sidebar()
+    
+    # Render selected page
+    if page == "Overview":
+        render_overview_page()
+    elif page == "Positions":
+        render_positions_page()
+    elif page == "Watchlist":
+        render_watchlist_page()
+
+
+if __name__ == "__main__":
+    main()
