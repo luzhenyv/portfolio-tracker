@@ -9,7 +9,7 @@ Defines all database entities following the requirements:
 - Watchlist targets and investment thesis
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Optional
@@ -69,7 +69,7 @@ class Asset(Base):
         nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.now(datetime.timezone.utc), nullable=False
+        DateTime, default=datetime.now(timezone.utc), nullable=False
     )
 
     # Relationships
@@ -201,7 +201,7 @@ class ValuationMetric(Base):
     revenue_growth: Mapped[Optional[float]] = mapped_column(Float)
     eps_growth: Mapped[Optional[float]] = mapped_column(Float)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc)
     )
 
     # Relationships

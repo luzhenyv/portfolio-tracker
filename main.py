@@ -34,7 +34,7 @@ from db.repositories import AssetRepository, PositionRepository
 
 def cmd_init(args):
     """Initialize the database."""
-    db = init_db()
+    db = init_db(args.db_url, if_drop=args.if_drop)
     print("✅ Database initialized successfully")
     print(f"   Location: {db.db_url}")
 
@@ -192,7 +192,9 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Commands")
     
     # init command
-    subparsers.add_parser("init", help="Initialize database")
+    init = subparsers.add_parser("init", help="Initialize database")
+    init.add_argument("--db-url", help="Custom database URL", default=None)
+    init.add_argument("--if-drop", action="store_true", help="Drop existing tables before creating")
     
     # add-asset command
     add_asset = subparsers.add_parser("add-asset", help="Add asset to track")
