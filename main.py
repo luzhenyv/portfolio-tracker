@@ -28,9 +28,14 @@ import argparse
 import sys
 from datetime import datetime
 
-from db import init_db, get_db, Asset, AssetStatus
+from db import init_db, AssetStatus
 from db.repositories import AssetRepository, PositionRepository
-from services.asset_service import create_asset_with_data, print_asset_creation_result
+from services.asset_service import (
+    create_asset_with_data,
+    print_asset_creation_result,
+    create_position,
+    print_position_creation_result,
+)
 
 
 def cmd_init(args):
@@ -51,34 +56,13 @@ def cmd_add_asset(args):
 
 def cmd_add_position(args):
     """Add a position (buy lot) for an asset."""
-    db = init_db()
-    
-    with db.session() as session:
-        asset_repo = AssetRepository(session)
-        position_repo = PositionRepository(session)
-        
-        asset = asset_repo.get_by_ticker(args.ticker.upper())
-        
-        if not asset:
-            print(f"❌ Asset not found: {args.ticker}")
-            print("   Use 'add-asset' to add it first.")
-            return 1
-        
-        # Use today's date if not specified
-        buy_date = args.date or datetime.now().strftime("%Y-%m-%d")
-        
-        position = position_repo.create(
-            asset_id=asset.id,
-            buy_date=buy_date,
-            shares=args.shares,
-            buy_price=args.price,
-        )
-        
-        print(f"✅ Added position for {asset.ticker}")
-        print(f"   Shares: {args.shares}")
-        print(f"   Price: ${args.price:.2f}")
-        print(f"   Date: {buy_date}")
-        print(f"   Cost: ${args.shares * args.price:,.2f}")
+    result = create_position(
+        ticker=args.ticker,
+        shares=args.shares,
+        buy_price=args.price,
+        buy_date=args.date,
+    )
+    print_position_creation_result(result)
 
 
 def cmd_update(args):
