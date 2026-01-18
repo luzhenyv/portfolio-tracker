@@ -44,8 +44,6 @@ from services.asset_service import (
 from services.position_service import (
     buy_position,
     cover_position,
-    create_position,
-    print_position_creation_result,
     print_trade_result,
     sell_position,
     short_position,
@@ -66,17 +64,6 @@ def cmd_add_asset(args):
     status = AssetStatus.OWNED if args.status == "OWNED" else AssetStatus.WATCHLIST
     result = create_asset_with_data(args.ticker.upper(), status)
     print_asset_creation_result(result)
-
-
-def cmd_add_position(args):
-    """Add a position (buy lot) - legacy command, use 'buy' instead."""
-    result = create_position(
-        ticker=args.ticker,
-        shares=args.shares,
-        buy_price=args.price,
-        buy_date=args.date,
-    )
-    print_position_creation_result(result)
 
 
 def cmd_buy(args):
@@ -296,14 +283,6 @@ def main():
     init.add_argument("--db-url", help="Custom database URL", default=None)
     init.add_argument("--if-drop", action="store_true", help="Drop existing tables before creating")
     
-    # add-asset command
-    add_asset = subparsers.add_parser("add-asset", help="Add asset to track")
-    add_asset.add_argument("ticker", help="Stock ticker symbol")
-    add_asset.add_argument("--status", choices=["OWNED", "WATCHLIST"], default="WATCHLIST")
-    add_asset.add_argument("--name", help="Company name")
-    add_asset.add_argument("--sector", help="Sector")
-    add_asset.add_argument("--exchange", help="Exchange")
-    
     # add-position command (legacy - kept for compatibility)
     add_pos = subparsers.add_parser("add-position", help="Add position (buy lot) - legacy")
     add_pos.add_argument("ticker", help="Stock ticker symbol")
@@ -375,7 +354,6 @@ def main():
     commands = {
         "init": cmd_init,
         "add-asset": cmd_add_asset,
-        "add-position": cmd_add_position,
         "buy": cmd_buy,
         "sell": cmd_sell,
         "short": cmd_short,
