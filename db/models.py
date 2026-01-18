@@ -208,7 +208,7 @@ class Position(Base):
     Tracks cumulative realized P&L for reporting.
     Replaces old lot-based Position model - now uses Trade ledger for audit trail.
     """
-    __tablename__ = "position_state"
+    __tablename__ = "positions"
 
     asset_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True

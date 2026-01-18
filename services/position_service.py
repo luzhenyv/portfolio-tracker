@@ -68,7 +68,7 @@ def execute_trade(
         return TradeResult(
             trade=None,
             asset=None,
-            position_state=None,
+            position=None,
             success=False,
             action=action,
             errors=["Shares must be positive"],
@@ -79,7 +79,7 @@ def execute_trade(
         return TradeResult(
             trade=None,
             asset=None,
-            position_state=None,
+            position=None,
             success=False,
             action=action,
             errors=["Price must be positive"],
@@ -326,8 +326,8 @@ def print_trade_result(result: TradeResult) -> None:
         if result.trade.fees > 0:
             print(f"   Fees: ${result.trade.fees:.2f}")
         
-        if result.position_state:
-            state = result.position_state
+        if result.position:
+            state = result.position
             if state.long_shares > 0:
                 print(f"   Long Position: {state.long_shares:.2f} shares @ ${state.long_avg_cost:.2f} avg")
             if state.short_shares > 0:
