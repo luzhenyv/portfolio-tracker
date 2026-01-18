@@ -178,7 +178,7 @@ def render_positions_page():
     st.header("📈 Owned Positions")
     
     try:
-        portfolio_df, _ = compute_portfolio()
+        portfolio_df, summary = compute_portfolio()
         risk = compute_risk_metrics()
         decisions = decision_engine()
     except ValueError as e:
@@ -202,35 +202,50 @@ def render_positions_page():
     
     # Format for display
     display_df = merged.copy()
-    display_df["buy_price"] = display_df["buy_price"].apply(lambda x: f"${x:.2f}")
+    
+    # Calculate values from available columns
+    total_cost = summary["total_cost"]
+    display_df["avg_cost"] = (display_df["long_mv"] / display_df["long_shares"]).where(
+        display_df["long_shares"] > 0, 0
+    )
+    display_df["market_value"] = display_df["net"]  # Use net exposure
+    display_df["pnl_pct"] = (display_df["pnl"] / (display_df["long_shares"] * display_df["avg_cost"])).where(
+        display_df["long_shares"] > 0, 0
+    )
+    
+    # Format numeric columns for display
+    display_df["avg_cost"] = display_df["avg_cost"].apply(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
     display_df["close"] = display_df["close"].apply(lambda x: f"${x:.2f}")
     display_df["market_value"] = display_df["market_value"].apply(format_currency)
     display_df["pnl"] = display_df["pnl"].apply(lambda x: f"${x:+,.0f}")
-    display_df["pnl_pct"] = display_df["pnl_pct"].apply(lambda x: f"{x:+.1%}")
-    display_df["weight"] = display_df["weight"].apply(lambda x: f"{x:.1%}")
+    display_df["pnl_pct"] = display_df["pnl_pct"].apply(lambda x: f"{x:+.1%}" if pd.notna(x) and abs(x) < 100 else "N/A")
+    display_df["net_weight"] = display_df["net_weight"].apply(lambda x: f"{x:.1%}")
     
     display_cols = [
-        "ticker", "shares", "buy_price", "close",
-        "market_value", "pnl", "pnl_pct", "weight",
+        "ticker", "net_shares", "avg_cost", "close",
+        "market_value", "pnl", "pnl_pct", "net_weight",
         "action", "reasons"
     ]
+    
+    # Rename columns for display
+    column_config = {
+        "ticker": st.column_config.TextColumn("Ticker", width="small"),
+        "net_shares": st.column_config.TextColumn("Shares", width="small"),
+        "avg_cost": st.column_config.TextColumn("Avg Cost", width="small"),
+        "close": st.column_config.TextColumn("Current", width="small"),
+        "market_value": st.column_config.TextColumn("Market Value", width="medium"),
+        "pnl": st.column_config.TextColumn("P&L", width="small"),
+        "pnl_pct": st.column_config.TextColumn("P&L %", width="small"),
+        "net_weight": st.column_config.TextColumn("Weight", width="small"),
+        "action": st.column_config.TextColumn("Action", width="small"),
+        "reasons": st.column_config.TextColumn("Reasons", width="large"),
+    }
     
     st.dataframe(
         display_df[display_cols],
         use_container_width=True,
         hide_index=True,
-        column_config={
-            "ticker": st.column_config.TextColumn("Ticker", width="small"),
-            "shares": st.column_config.NumberColumn("Shares", format="%.2f"),
-            "buy_price": st.column_config.TextColumn("Buy Price", width="small"),
-            "close": st.column_config.TextColumn("Current", width="small"),
-            "market_value": st.column_config.TextColumn("Value", width="small"),
-            "pnl": st.column_config.TextColumn("P&L", width="small"),
-            "pnl_pct": st.column_config.TextColumn("P&L %", width="small"),
-            "weight": st.column_config.TextColumn("Weight", width="small"),
-            "action": st.column_config.TextColumn("Action", width="small"),
-            "reasons": st.column_config.TextColumn("Reasons", width="medium"),
-        },
+        column_config=column_config,
     )
     
     st.caption(
@@ -257,6 +272,27 @@ def render_watchlist_page():
     Shows:
     - Valuation metrics for all assets
     - BUY/WAIT/AVOID signals
+    
+    Future: Add asset creation UI using services.asset_service.create_asset_with_data()
+    Example integration:
+        from services.asset_service import create_asset_with_data, AssetStatus
+        
+        with st.form("add_asset_form"):
+            ticker = st.text_input("Ticker Symbol")
+            status = st.selectbox("Status", ["OWNED", "WATCHLIST"])
+            submitted = st.form_submit_button("Add Asset")
+            
+            if submitted and ticker:
+                result = create_asset_with_data(
+                    ticker, 
+                    AssetStatus.OWNED if status == "OWNED" else AssetStatus.WATCHLIST
+                )
+                if result.success:
+                    st.success(result.status_message)
+                    if result.prices_fetched > 0:
+                        st.metric("Prices Fetched", result.prices_fetched)
+                else:
+                    st.error("Failed to add asset")
     """
     st.header("👀 Watchlist & Valuation")
     

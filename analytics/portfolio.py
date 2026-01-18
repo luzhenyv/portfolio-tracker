@@ -239,6 +239,11 @@ class PortfolioAnalyzer:
             for p in positions
         ])
         
+        # Calculate total cost and market value
+        total_cost = summary.long_total_cost + summary.short_total_cost
+        total_market_value = summary.long_market_value - summary.short_market_value  # Net value
+        total_pnl_pct = (summary.total_pnl / total_cost) if total_cost > 0 else 0.0
+        
         summary_dict = {
             "long_cost": summary.long_total_cost,
             "long_mv": summary.long_market_value,
@@ -251,6 +256,10 @@ class PortfolioAnalyzer:
             "total_unrealized_pnl": summary.total_unrealized_pnl,
             "total_realized_pnl": summary.total_realized_pnl,
             "total_pnl": summary.total_pnl,
+            # Additional keys for UI compatibility
+            "total_cost": total_cost,
+            "total_market_value": total_market_value,
+            "total_pnl_pct": total_pnl_pct,
         }
         
         return df, summary_dict
