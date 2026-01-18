@@ -127,6 +127,9 @@ def execute_trade(
         # Calculate realized P&L and update state based on action
         realized_pnl = 0.0
         
+        # Store original shares for trade record
+        original_shares = shares
+        
         try:
             if action == TradeAction.BUY:
                 # If short shares exist, cover them first (like buying to close short)
@@ -187,7 +190,7 @@ def execute_trade(
                 asset_id=asset.id,
                 trade_date=trade_date,
                 action=action,
-                shares=shares,
+                shares=original_shares,
                 price=price,
                 fees=fees,
                 realized_pnl=realized_pnl,
@@ -201,13 +204,27 @@ def execute_trade(
                 TradeAction.COVER: "Covered",
             }
             
-            status_message = f"✅ {action_verb[action]} {shares} shares of {ticker} @ ${price:.2f}"
+            status_message = f"✅ {action_verb[action]} {original_shares} shares of {ticker} @ ${price:.2f}"
+            
+            # Calculate net invested avg cost for long positions
+            net_invested_avg_cost = None
+            if position.long_shares > 0:
+                # Calculate net invested: sum of all buy/sell transactions
+                trade_repo_for_calc = TradeRepository(session)
+                trades_for_asset = trade_repo_for_calc.get_trades_for_asset(asset.id)
+                net_invested = 0.0
+                for t in trades_for_asset:
+                    if t.action in (TradeAction.BUY, TradeAction.COVER):
+                        net_invested += t.shares * t.price + t.fees
+                    elif t.action in (TradeAction.SELL, TradeAction.SHORT):
+                        net_invested -= t.shares * t.price - t.fees
+                net_invested_avg_cost = net_invested / position.long_shares
             
             # Add position details
             if position.long_shares > 0 and position.short_shares > 0:
                 status_message += f"\n   📊 Position: Long {position.long_shares:.2f} | Short {position.short_shares:.2f}"
             elif position.long_shares > 0:
-                status_message += f"\n   📊 Position: {position.long_shares:.2f} shares @ ${position.long_avg_cost:.2f} avg"
+                status_message += f"\n   📊 Position: {position.long_shares:.2f} shares @ ${net_invested_avg_cost:.2f} net avg cost"
             elif position.short_shares > 0:
                 status_message += f"\n   📊 Short Position: {position.short_shares:.2f} shares @ ${position.short_avg_price:.2f} avg"
             
@@ -299,9 +316,21 @@ def print_trade_result(result: TradeResult) -> None:
         if result.position:
             state = result.position
             if state.long_shares > 0:
-                print(f"   Long Position: {state.long_shares:.2f} shares @ ${state.long_avg_cost:.2f} avg")
+                # Calculate net invested avg cost
+                from db import get_db
+                from db.repositories import PositionRepository
+                
+                db = get_db()
+                with db.session() as session:
+                    pos_repo = PositionRepository(session)
+                    net_invested = pos_repo.get_net_invested_by_asset(state.asset_id)
+                    net_invested_avg_cost = net_invested / state.long_shares if state.long_shares > 0 else 0.0
+                
+                print(f"   Long Position: {state.long_shares:.2f} shares @ ${net_invested_avg_cost:.2f} net avg cost")
+                print(f"   (Tax basis: ${state.long_avg_cost:.2f} avg cost)")
             if state.short_shares > 0:
                 print(f"   Short Position: {state.short_shares:.2f} shares @ ${state.short_avg_price:.2f} avg")
             if state.realized_pnl != 0:
                 print(f"   Total Realized P&L: ${state.realized_pnl:+,.2f}")
+
 

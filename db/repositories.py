@@ -540,4 +540,52 @@ class PositionRepository:
             }
             for r in results
         ]
+    
+    def get_net_invested_by_asset(self, asset_id: int) -> float:
+        """
+        Calculate net invested amount for a single asset.
+        
+        Net invested = Σ(buy_shares * buy_price + buy_fees) - Σ(sell_shares * sell_price - sell_fees)
+        
+        Returns:
+            Net invested amount (cash still at risk after taking profits).
+        """
+        # Get all trades for this asset
+        stmt = (
+            select(Trade)
+            .where(Trade.asset_id == asset_id)
+            .order_by(Trade.trade_date, Trade.id)
+        )
+        trades = self.session.scalars(stmt).all()
+        
+        net_invested = 0.0
+        for trade in trades:
+            if trade.action in (TradeAction.BUY, TradeAction.COVER):
+                # Money going out (buying)
+                net_invested += trade.shares * trade.price + trade.fees
+            elif trade.action in (TradeAction.SELL, TradeAction.SHORT):
+                # Money coming in (selling)
+                net_invested -= trade.shares * trade.price - trade.fees
+        
+        return net_invested
+    
+    def get_net_invested_summary(self) -> dict[int, float]:
+        """
+        Calculate net invested amount for all assets with positions.
+        
+        Returns:
+            Dict mapping asset_id to net invested amount.
+        """
+        # Get all assets with active positions
+        stmt = (
+            select(Position.asset_id)
+            .where((Position.long_shares > 0) | (Position.short_shares > 0))
+        )
+        asset_ids = self.session.scalars(stmt).all()
+        
+        # Calculate net invested for each
+        return {
+            asset_id: self.get_net_invested_by_asset(asset_id)
+            for asset_id in asset_ids
+        }
 

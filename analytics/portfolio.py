@@ -42,6 +42,9 @@ class PositionMetrics:
     gross_exposure: float
     total_unrealized_pnl: float
     realized_pnl: float
+    # Net invested (adjusted by realized profits)
+    net_invested: float
+    net_invested_avg_cost: float
     # Weights
     gross_weight: float
     net_weight: float
@@ -106,6 +109,9 @@ class PortfolioAnalyzer:
             
             # Get realized P&L summary
             realized_summary = trade_repo.get_realized_pnl_summary()
+            
+            # Get net invested amounts for all positions
+            net_invested_by_asset = position_repo.get_net_invested_summary()
         
         # Calculate metrics per position
         positions: list[PositionMetrics] = []
@@ -155,6 +161,14 @@ class PortfolioAnalyzer:
             gross_exposure = long_mv + short_mv
             total_unrl = long_unrl + short_unrl
             
+            # Net invested calculations
+            net_invested = net_invested_by_asset.get(asset_id, 0.0)
+            # Only compute net invested avg cost for long positions
+            if long_shares > 0:
+                net_invested_avg_cost = net_invested / long_shares
+            else:
+                net_invested_avg_cost = 0.0
+            
             # Accumulate for weights
             total_gross_exposure += gross_exposure
             long_mv_sum += long_mv
@@ -183,6 +197,8 @@ class PortfolioAnalyzer:
                 gross_exposure=gross_exposure,
                 total_unrealized_pnl=total_unrl,
                 realized_pnl=pos["realized_pnl"],
+                net_invested=net_invested,
+                net_invested_avg_cost=net_invested_avg_cost,
                 gross_weight=0.0,  # Calculated below
                 net_weight=0.0,
             ))
@@ -238,6 +254,8 @@ class PortfolioAnalyzer:
                 "realized_pnl": p.realized_pnl,
                 "gross_weight": p.gross_weight,
                 "net_weight": p.net_weight,
+                "net_invested": p.net_invested,
+                "net_invested_avg_cost": p.net_invested_avg_cost,
             }
             for p in positions
         ])

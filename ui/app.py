@@ -203,18 +203,15 @@ def render_positions_page():
     # Format for display
     display_df = merged.copy()
     
-    # Calculate values from available columns
-    total_cost = summary["total_cost"]
-    display_df["avg_cost"] = (display_df["long_mv"] / display_df["long_shares"]).where(
-        display_df["long_shares"] > 0, 0
-    )
+    # Use net_invested_avg_cost from the dataframe
+    display_df["avg_cost"] = display_df["net_invested_avg_cost"]
     display_df["market_value"] = display_df["net"]  # Use net exposure
-    display_df["pnl_pct"] = (display_df["pnl"] / (display_df["long_shares"] * display_df["avg_cost"])).where(
-        display_df["long_shares"] > 0, 0
+    display_df["pnl_pct"] = (display_df["pnl"] / display_df["net_invested"]).where(
+        display_df["net_invested"] > 0, 0
     )
     
     # Format numeric columns for display
-    display_df["avg_cost"] = display_df["avg_cost"].apply(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
+    display_df["avg_cost"] = display_df["avg_cost"].apply(lambda x: f"${x:.2f}" if pd.notna(x) and x > 0 else "N/A")
     display_df["close"] = display_df["close"].apply(lambda x: f"${x:.2f}")
     display_df["market_value"] = display_df["market_value"].apply(format_currency)
     display_df["pnl"] = display_df["pnl"].apply(lambda x: f"${x:+,.0f}")
@@ -231,7 +228,7 @@ def render_positions_page():
     column_config = {
         "ticker": st.column_config.TextColumn("Ticker", width="small"),
         "net_shares": st.column_config.TextColumn("Shares", width="small"),
-        "avg_cost": st.column_config.TextColumn("Avg Cost", width="small"),
+        "avg_cost": st.column_config.TextColumn("Net Avg Cost", width="small"),
         "close": st.column_config.TextColumn("Current", width="small"),
         "market_value": st.column_config.TextColumn("Market Value", width="medium"),
         "pnl": st.column_config.TextColumn("P&L", width="small"),
