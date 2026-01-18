@@ -30,6 +30,7 @@ from datetime import datetime
 
 from db import init_db, get_db, Asset, AssetStatus
 from db.repositories import AssetRepository, PositionRepository
+from services.asset_service import create_asset_with_data, print_asset_creation_result
 
 
 def cmd_init(args):
@@ -41,27 +42,9 @@ def cmd_init(args):
 
 def cmd_add_asset(args):
     """Add a new asset to track."""
-    db = init_db()
-    
     status = AssetStatus.OWNED if args.status == "OWNED" else AssetStatus.WATCHLIST
-    
-    with db.session() as session:
-        repo = AssetRepository(session)
-        asset, created = repo.get_or_create(
-            ticker=args.ticker.upper(),
-            status=status,
-            name=args.name,
-            sector=args.sector,
-            exchange=args.exchange,
-        )
-        
-        if created:
-            print(f"✅ Added asset: {asset.ticker}")
-        else:
-            print(f"ℹ️ Asset already exists: {asset.ticker}")
-            if args.status:
-                repo.update_status(asset.id, status)
-                print(f"   Updated status to: {status.value}")
+    result = create_asset_with_data(args.ticker.upper(), status)
+    print_asset_creation_result(result)
 
 
 def cmd_add_position(args):
@@ -199,7 +182,7 @@ def main():
     # add-asset command
     add_asset = subparsers.add_parser("add-asset", help="Add asset to track")
     add_asset.add_argument("ticker", help="Stock ticker symbol")
-    add_asset.add_argument("--status", choices=["OWNED", "WATCHLIST"], default="OWNED")
+    add_asset.add_argument("--status", choices=["OWNED", "WATCHLIST"], default="WATCHLIST")
     add_asset.add_argument("--name", help="Company name")
     add_asset.add_argument("--sector", help="Sector")
     add_asset.add_argument("--exchange", help="Exchange")
