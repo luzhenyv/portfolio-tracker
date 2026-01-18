@@ -13,7 +13,7 @@ import pandas as pd
 import numpy as np
 
 from db import get_db, AssetStatus
-from db.repositories import AssetRepository, PositionRepository, PriceRepository
+from db.repositories import AssetRepository, PriceRepository
 from config import config
 
 

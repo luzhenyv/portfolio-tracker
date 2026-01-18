@@ -15,7 +15,7 @@ from typing import Sequence
 import pandas as pd
 
 from db import get_db
-from db.repositories import PositionStateRepository, PriceRepository, TradeRepository
+from db.repositories import PositionRepository, PriceRepository, TradeRepository
 
 
 @dataclass
@@ -90,12 +90,12 @@ class PortfolioAnalyzer:
         db = get_db()
         
         with db.session() as session:
-            state_repo = PositionStateRepository(session)
+            position_repo = PositionRepository(session)
             price_repo = PriceRepository(session)
             trade_repo = TradeRepository(session)
             
             # Get position state data
-            position_data = state_repo.get_position_summary()
+            position_data = position_repo.get_position_summary()
             
             if not position_data:
                 raise ValueError("No positions found in portfolio.")
@@ -288,7 +288,7 @@ def load_latest_prices() -> pd.DataFrame:
     db = get_db()
     
     with db.session() as session:
-        state_repo = PositionStateRepository(session)
+        state_repo = PositionRepository(session)
         price_repo = PriceRepository(session)
         
         position_data = state_repo.get_position_summary()

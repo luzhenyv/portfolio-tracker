@@ -84,8 +84,8 @@ class Asset(Base):
     prices: Mapped[list["PriceDaily"]] = relationship(
         "PriceDaily", back_populates="asset", cascade="all, delete-orphan"
     )
-    positions: Mapped[list["Position"]] = relationship(
-        "Position", back_populates="asset", cascade="all, delete-orphan"
+    position: Mapped[Optional["Position"]] = relationship(
+        "Position", back_populates="asset", uselist=False, cascade="all, delete-orphan"
     )
     fundamentals: Mapped[list["FundamentalQuarterly"]] = relationship(
         "FundamentalQuarterly", back_populates="asset", cascade="all, delete-orphan"
@@ -133,35 +133,6 @@ class PriceDaily(Base):
 
     def __repr__(self) -> str:
         return f"<PriceDaily(asset_id={self.asset_id}, date={self.date}, close={self.close})>"
-
-
-class Position(Base):
-    """
-    Portfolio position with cost basis tracking.
-    
-    FR-3: Position tracking with ticker, shares, buy_price
-    Supports multiple lots per asset (different buy dates/prices)
-    """
-    __tablename__ = "positions"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    asset_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    buy_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
-    shares: Mapped[float] = mapped_column(Float, nullable=False)
-    buy_price: Mapped[float] = mapped_column(Float, nullable=False)
-
-    # Relationships
-    asset: Mapped["Asset"] = relationship("Asset", back_populates="positions")
-
-    @property
-    def cost_basis(self) -> float:
-        """Total cost basis for this position lot."""
-        return self.shares * self.buy_price
-
-    def __repr__(self) -> str:
-        return f"<Position(id={self.id}, asset_id={self.asset_id}, shares={self.shares})>"
 
 
 class FundamentalQuarterly(Base):
@@ -228,12 +199,14 @@ class Trade(Base):
         return f"<Trade(id={self.id}, action={self.action}, shares={self.shares})>"
 
 
-class PositionState(Base):
+class Position(Base):
     """
     Current position state per asset (long/short inventory).
     
+    FR-3: Position tracking with average cost basis.
     Maintains average cost for long positions and average price for short positions.
     Tracks cumulative realized P&L for reporting.
+    Replaces old lot-based Position model - now uses Trade ledger for audit trail.
     """
     __tablename__ = "position_state"
 
@@ -263,7 +236,7 @@ class PositionState(Base):
         return self.long_shares + self.short_shares
 
     def __repr__(self) -> str:
-        return f"<PositionState(asset_id={self.asset_id}, long={self.long_shares}, short={self.short_shares})>"
+        return f"<Position(asset_id={self.asset_id}, long={self.long_shares}, short={self.short_shares})>"
 
 
 class ValuationMetric(Base):

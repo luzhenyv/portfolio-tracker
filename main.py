@@ -36,7 +36,7 @@ import sys
 from datetime import datetime
 
 from db import init_db, AssetStatus
-from db.repositories import AssetRepository, PositionRepository
+from db.repositories import AssetRepository
 from services.asset_service import (
     create_asset_with_data,
     print_asset_creation_result,

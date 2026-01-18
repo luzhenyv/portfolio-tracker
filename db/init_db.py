@@ -12,14 +12,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.session import init_db, get_db
-from db.models import Asset, AssetStatus, Position
+from db.models import Asset, AssetStatus
+from services.position_service import execute_trade
+from db import TradeAction
 
 
 def create_sample_data():
     """
-    Create sample data for testing/demo purposes.
+    Create sample data for testing/demo purposes using Trade ledger.
     
     This is optional and can be skipped in production.
+    Uses the new Trade-based position tracking system.
     """
     db = get_db()
     
@@ -29,9 +32,9 @@ def create_sample_data():
         {"ticker": "GOOGL", "name": "Alphabet Inc.", "sector": "Technology", "status": AssetStatus.WATCHLIST},
     ]
     
-    sample_positions = [
-        {"ticker": "AAPL", "shares": 50, "buy_price": 150.00, "buy_date": "2024-01-15"},
-        {"ticker": "MSFT", "shares": 30, "buy_price": 375.00, "buy_date": "2024-02-01"},
+    sample_trades = [
+        {"ticker": "AAPL", "shares": 50, "price": 150.00, "date": "2024-01-15"},
+        {"ticker": "MSFT", "shares": 30, "price": 375.00, "date": "2024-02-01"},
     ]
     
     with db.session() as session:
@@ -48,27 +51,19 @@ def create_sample_data():
                 session.add(asset)
                 print(f"  Added asset: {asset_data['ticker']}")
         
-        session.flush()
-        
-        # Add positions
-        for pos_data in sample_positions:
-            asset = session.query(Asset).filter_by(ticker=pos_data["ticker"]).first()
-            if asset:
-                # Check if position exists
-                existing = session.query(Position).filter_by(
-                    asset_id=asset.id,
-                    buy_date=pos_data["buy_date"],
-                ).first()
-                
-                if not existing:
-                    position = Position(
-                        asset_id=asset.id,
-                        shares=pos_data["shares"],
-                        buy_price=pos_data["buy_price"],
-                        buy_date=pos_data["buy_date"],
-                    )
-                    session.add(position)
-                    print(f"  Added position: {pos_data['ticker']} x {pos_data['shares']}")
+        session.commit()
+    
+    # Execute trades to create positions (uses Trade + Position state)
+    for trade_data in sample_trades:
+        result = execute_trade(
+            ticker=trade_data["ticker"],
+            action=TradeAction.BUY,
+            shares=trade_data["shares"],
+            price=trade_data["price"],
+            trade_date=trade_data["date"],
+        )
+        if result.success:
+            print(f"  Executed trade: {trade_data['ticker']} BUY {trade_data['shares']} @ ${trade_data['price']}")
 
 
 def main():

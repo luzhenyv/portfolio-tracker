@@ -13,8 +13,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from db import Asset, AssetStatus, PositionState, Trade, TradeAction, get_db
-from db.repositories import AssetRepository, PositionStateRepository, TradeRepository
+from db import Asset, AssetStatus, Position, Trade, TradeAction, get_db
+from db.repositories import AssetRepository, PositionRepository, TradeRepository
 
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class TradeResult:
     """
     trade: Trade | None
     asset: Asset | None
-    position_state: PositionState | None
+    position: Position | None
     success: bool
     action: TradeAction | None
     realized_pnl: float = 0.0
@@ -97,7 +97,7 @@ def execute_trade(
     
     with db.session() as session:
         asset_repo = AssetRepository(session)
-        state_repo = PositionStateRepository(session)
+        position_repo = PositionRepository(session)
         trade_repo = TradeRepository(session)
         
         # Validate asset exists
@@ -107,7 +107,7 @@ def execute_trade(
             return TradeResult(
                 trade=None,
                 asset=None,
-                position_state=None,
+                position=None,
                 success=False,
                 action=action,
                 errors=[f"Asset not found: {ticker}"],
@@ -122,7 +122,7 @@ def execute_trade(
             logger.info(f"Updated {ticker} status from WATCHLIST to OWNED")
         
         # Get or create position state
-        state, _ = state_repo.get_or_create(asset.id)
+        position, _ = position_repo.get_or_create(asset.id)
         
         # Calculate realized P&L and update state based on action
         realized_pnl = 0.0
@@ -130,67 +130,67 @@ def execute_trade(
         try:
             if action == TradeAction.BUY:
                 # Add to long position with average cost
-                if state.long_shares > 0:
-                    total_cost = state.long_shares * state.long_avg_cost + shares * price
-                    state.long_shares += shares
-                    state.long_avg_cost = total_cost / state.long_shares
+                if position.long_shares > 0:
+                    total_cost = position.long_shares * position.long_avg_cost + shares * price
+                    position.long_shares += shares
+                    position.long_avg_cost = total_cost / position.long_shares
                 else:
-                    state.long_shares = shares
-                    state.long_avg_cost = price
+                    position.long_shares = shares
+                    position.long_avg_cost = price
             
             elif action == TradeAction.SELL:
                 # Reduce long position and calculate realized P&L
-                if shares > state.long_shares:
+                if shares > position.long_shares:
                     return TradeResult(
                         trade=None,
                         asset=asset,
-                        position_state=state,
+                        position=position,
                         success=False,
                         action=action,
-                        errors=[f"Cannot sell {shares} shares; only {state.long_shares} shares held"],
-                        status_message=f"❌ Cannot sell {shares} shares; only {state.long_shares:.2f} shares held",
+                        errors=[f"Cannot sell {shares} shares; only {position.long_shares} shares held"],
+                        status_message=f"❌ Cannot sell {shares} shares; only {position.long_shares:.2f} shares held",
                     )
                 
                 # Calculate realized P&L (avg cost method)
-                realized_pnl = shares * (price - state.long_avg_cost) - fees
-                state.long_shares -= shares
-                state.realized_pnl += realized_pnl
+                realized_pnl = shares * (price - position.long_avg_cost) - fees
+                position.long_shares -= shares
+                position.realized_pnl += realized_pnl
                 
                 # Clear avg cost if fully closed
-                if state.long_shares == 0:
-                    state.long_avg_cost = None
+                if position.long_shares == 0:
+                    position.long_avg_cost = None
             
             elif action == TradeAction.SHORT:
                 # Add to short position with average price
-                if state.short_shares > 0:
-                    total_proceeds = state.short_shares * state.short_avg_price + shares * price
-                    state.short_shares += shares
-                    state.short_avg_price = total_proceeds / state.short_shares
+                if position.short_shares > 0:
+                    total_proceeds = position.short_shares * position.short_avg_price + shares * price
+                    position.short_shares += shares
+                    position.short_avg_price = total_proceeds / position.short_shares
                 else:
-                    state.short_shares = shares
-                    state.short_avg_price = price
+                    position.short_shares = shares
+                    position.short_avg_price = price
             
             elif action == TradeAction.COVER:
                 # Reduce short position and calculate realized P&L
-                if shares > state.short_shares:
+                if shares > position.short_shares:
                     return TradeResult(
                         trade=None,
                         asset=asset,
-                        position_state=state,
+                        position=position,
                         success=False,
                         action=action,
-                        errors=[f"Cannot cover {shares} shares; only {state.short_shares} shares short"],
-                        status_message=f"❌ Cannot cover {shares} shares; only {state.short_shares:.2f} shares short",
+                        errors=[f"Cannot cover {shares} shares; only {position.short_shares} shares short"],
+                        status_message=f"❌ Cannot cover {shares} shares; only {position.short_shares:.2f} shares short",
                     )
                 
                 # Calculate realized P&L for short cover
-                realized_pnl = shares * (state.short_avg_price - price) - fees
-                state.short_shares -= shares
-                state.realized_pnl += realized_pnl
+                realized_pnl = shares * (position.short_avg_price - price) - fees
+                position.short_shares -= shares
+                position.realized_pnl += realized_pnl
                 
                 # Clear avg price if fully closed
-                if state.short_shares == 0:
-                    state.short_avg_price = None
+                if position.short_shares == 0:
+                    position.short_avg_price = None
             
             # Create trade record
             trade = trade_repo.create_trade(
@@ -222,7 +222,7 @@ def execute_trade(
             return TradeResult(
                 trade=trade,
                 asset=asset,
-                position_state=state,
+                position=position,
                 success=True,
                 action=action,
                 realized_pnl=realized_pnl,
@@ -236,7 +236,7 @@ def execute_trade(
             return TradeResult(
                 trade=None,
                 asset=asset,
-                position_state=state,
+                position=position,
                 success=False,
                 action=action,
                 errors=[str(e)],

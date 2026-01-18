@@ -143,7 +143,7 @@ class RiskAnalyzer:
         
         with db.session() as session:
             position_repo = PositionRepository(session)
-            position_data = position_repo.get_position_summary()
+            position_data = position_repo.get_cost_based_summary()
         
         if not position_data:
             return pd.Series(dtype=float)

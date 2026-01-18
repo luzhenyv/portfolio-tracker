@@ -12,10 +12,9 @@ from db.models import (
     ConfidenceLevel,
     FundamentalQuarterly,
     InvestmentThesis,
-    Position,
-    PositionState,
+    Position,  # Current position state (formerly PositionState)
     PriceDaily,
-    Trade,
+    Trade,  # Transaction history
     TradeAction,
     ValuationMetric,
     WatchlistTarget,
@@ -34,10 +33,9 @@ __all__ = [
     "ConfidenceLevel",
     "FundamentalQuarterly",
     "InvestmentThesis",
-    "Position",
-    "PositionState",
+    "Position",  # Current position state
     "PriceDaily",
-    "Trade",
+    "Trade",  # Transaction ledger
     "TradeAction",
     "ValuationMetric",
     "WatchlistTarget",
