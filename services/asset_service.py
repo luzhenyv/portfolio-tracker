@@ -131,10 +131,16 @@ def create_asset_with_data(
         try:
             fetcher = PriceFetcher()
             fetch_result = fetcher.fetch_for_asset(asset, start_date)
-            prices_fetched = fetch_result.records_count
             
             if not fetch_result.success:
                 errors.append(f"Price fetch failed: {fetch_result.message}")
+            elif fetch_result.records:
+                # Save fetched records using existing session
+                count = price_repo.bulk_upsert_prices(asset.id, fetch_result.records)
+                prices_fetched = count
+                logger.info(f"✅ Stored {count} price records for {ticker}")
+            else:
+                prices_fetched = 0
         except Exception as e:
             logger.error(f"Failed to fetch prices for {ticker}: {e}")
             errors.append(f"Price fetch error: {str(e)}")

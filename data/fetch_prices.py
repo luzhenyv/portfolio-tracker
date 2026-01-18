@@ -17,7 +17,7 @@ import pandas as pd
 import yfinance as yf
 
 from config import config
-from db import Asset, get_db
+from db import Asset
 from db.repositories import AssetRepository, PriceRepository, ValuationRepository
 
 
@@ -31,6 +31,7 @@ class FetchResult:
     success: bool
     records_count: int = 0
     message: str = ""
+    records: list[dict] = None  # Price records fetched (not yet saved)
 
 
 class PriceFetcher:
@@ -84,18 +85,13 @@ class PriceFetcher:
             # Convert to records
             records = self._dataframe_to_records(df)
             
-            # Store in database
-            db = get_db()
-            with db.session() as session:
-                price_repo = PriceRepository(session)
-                count = price_repo.bulk_upsert_prices(asset.id, records)
-            
-            logger.info(f"✅ Stored {count} new records for {asset.ticker}")
+            logger.info(f"✅ Fetched {len(records)} records for {asset.ticker}")
             return FetchResult(
                 ticker=asset.ticker,
                 success=True,
-                records_count=count,
-                message=f"Stored {count} new records",
+                records_count=len(records),
+                records=records,
+                message=f"Fetched {len(records)} records",
             )
             
         except Exception as e:
@@ -154,44 +150,6 @@ class PriceFetcher:
             return int(value)
         except (ValueError, TypeError):
             return None
-    
-    def fetch_all_assets(self) -> list[FetchResult]:
-        """
-        Fetch prices for all assets.
-        
-        Implements incremental fetching from last known date.
-        
-        Returns:
-            List of FetchResult for each asset.
-        """
-        db = get_db()
-        results = []
-        
-        with db.session() as session:
-            asset_repo = AssetRepository(session)
-            assets = list(asset_repo.get_all())
-        
-        # Fetch outside session to avoid long transactions
-        for asset in assets:
-            # Get incremental start date
-            with db.session() as session:
-                price_repo = PriceRepository(session)
-                latest_date = price_repo.get_latest_date(asset.id)
-            
-            if latest_date:
-                start_dt = datetime.strptime(latest_date, "%Y-%m-%d") + timedelta(days=1)
-                start_date = start_dt.strftime("%Y-%m-%d")
-            else:
-                start_dt = datetime.now() - timedelta(days=self.config.default_lookback_days)
-                start_date = start_dt.strftime("%Y-%m-%d")
-            
-            result = self.fetch_for_asset(asset, start_date)
-            results.append(result)
-            
-            # Rate limiting
-            time.sleep(self.config.request_delay)
-        
-        return results
 
 
 class ValuationFetcher:
@@ -249,62 +207,6 @@ class ValuationFetcher:
             return val
         except (ValueError, TypeError):
             return None
-    
-    def fetch_and_store_for_asset(self, asset: Asset) -> FetchResult:
-        """
-        Fetch and store valuation metrics for an asset.
-        
-        Args:
-            asset: Asset to fetch valuation for.
-            
-        Returns:
-            FetchResult with operation status.
-        """
-        logger.info(f"📊 Fetching valuation for {asset.ticker}")
-        
-        metrics = self.fetch_for_ticker(asset.ticker)
-        
-        # Store in database
-        db = get_db()
-        with db.session() as session:
-            valuation_repo = ValuationRepository(session)
-            valuation_repo.upsert(
-                asset_id=asset.id,
-                pe_forward=metrics["pe_forward"],
-                peg=metrics["peg"],
-                ev_ebitda=metrics["ev_ebitda"],
-                revenue_growth=metrics["revenue_growth"],
-                eps_growth=metrics["eps_growth"],
-            )
-        
-        logger.info(f"✅ Updated valuation for {asset.ticker}")
-        return FetchResult(
-            ticker=asset.ticker,
-            success=True,
-            records_count=1,
-            message="Valuation updated",
-        )
-    
-    def fetch_all_assets(self) -> list[FetchResult]:
-        """
-        Fetch valuation metrics for all assets.
-        
-        Returns:
-            List of FetchResult for each asset.
-        """
-        db = get_db()
-        results = []
-        
-        with db.session() as session:
-            asset_repo = AssetRepository(session)
-            assets = list(asset_repo.get_all())
-        
-        for asset in assets:
-            result = self.fetch_and_store_for_asset(asset)
-            results.append(result)
-            time.sleep(config.data_fetcher.request_delay)
-        
-        return results
 
 
 def fetch_prices_main():
