@@ -79,3 +79,29 @@ CREATE TABLE IF NOT EXISTS valuation_metrics (
     FOREIGN KEY (asset_id) REFERENCES assets(id)
 );
 
+CREATE TABLE IF NOT EXISTS trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id INTEGER NOT NULL,
+    trade_date TEXT NOT NULL,
+    action TEXT CHECK(action IN ('BUY', 'SELL', 'SHORT', 'COVER')) NOT NULL,
+    shares REAL NOT NULL,
+    price REAL NOT NULL,
+    fees REAL DEFAULT 0,
+    realized_pnl REAL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (asset_id) REFERENCES assets(id)
+);
+CREATE INDEX IF NOT EXISTS idx_trades_asset_date
+ON trades(asset_id, trade_date);
+
+CREATE TABLE IF NOT EXISTS position_state (
+    asset_id INTEGER PRIMARY KEY,
+    long_shares REAL NOT NULL DEFAULT 0,
+    long_avg_cost REAL,
+    short_shares REAL NOT NULL DEFAULT 0,
+    short_avg_price REAL,
+    realized_pnl REAL NOT NULL DEFAULT 0,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (asset_id) REFERENCES assets(id)
+);
+

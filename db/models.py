@@ -48,6 +48,14 @@ class ConfidenceLevel(str, Enum):
     HIGH = "HIGH"
 
 
+class TradeAction(str, Enum):
+    """Trade action type for position management."""
+    BUY = "BUY"
+    SELL = "SELL"
+    SHORT = "SHORT"
+    COVER = "COVER"
+
+
 class Asset(Base):
     """
     Core asset entity representing a tradable security.
@@ -181,6 +189,81 @@ class FundamentalQuarterly(Base):
 
     def __repr__(self) -> str:
         return f"<FundamentalQuarterly(asset_id={self.asset_id}, quarter={self.quarter})>"
+
+
+class Trade(Base):
+    """
+    Trade ledger for position management.
+    
+    Records all buy/sell/short/cover transactions with realized P&L.
+    Supports long and short position tracking with average cost method.
+    """
+    __tablename__ = "trades"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    trade_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
+    action: Mapped[TradeAction] = mapped_column(
+        SQLEnum(TradeAction, native_enum=False, length=10),
+        nullable=False
+    )
+    shares: Mapped[float] = mapped_column(Float, nullable=False)
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    fees: Mapped[float] = mapped_column(Float, default=0.0)
+    realized_pnl: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now(timezone.utc), nullable=False
+    )
+
+    # Relationships
+    asset: Mapped["Asset"] = relationship("Asset")
+
+    __table_args__ = (
+        Index("idx_trades_asset_date", "asset_id", "trade_date"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Trade(id={self.id}, action={self.action}, shares={self.shares})>"
+
+
+class PositionState(Base):
+    """
+    Current position state per asset (long/short inventory).
+    
+    Maintains average cost for long positions and average price for short positions.
+    Tracks cumulative realized P&L for reporting.
+    """
+    __tablename__ = "position_state"
+
+    asset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True
+    )
+    long_shares: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    long_avg_cost: Mapped[Optional[float]] = mapped_column(Float)
+    short_shares: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    short_avg_price: Mapped[Optional[float]] = mapped_column(Float)
+    realized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc)
+    )
+
+    # Relationships
+    asset: Mapped["Asset"] = relationship("Asset")
+
+    @property
+    def net_shares(self) -> float:
+        """Net shares (long - short)."""
+        return self.long_shares - self.short_shares
+
+    @property
+    def gross_shares(self) -> float:
+        """Gross shares (long + short)."""
+        return self.long_shares + self.short_shares
+
+    def __repr__(self) -> str:
+        return f"<PositionState(asset_id={self.asset_id}, long={self.long_shares}, short={self.short_shares})>"
 
 
 class ValuationMetric(Base):

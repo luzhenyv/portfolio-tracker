@@ -13,7 +13,10 @@ from db.models import (
     FundamentalQuarterly,
     InvestmentThesis,
     Position,
+    PositionState,
     PriceDaily,
+    Trade,
+    TradeAction,
     ValuationMetric,
     WatchlistTarget,
 )
@@ -32,7 +35,10 @@ __all__ = [
     "FundamentalQuarterly",
     "InvestmentThesis",
     "Position",
+    "PositionState",
     "PriceDaily",
+    "Trade",
+    "TradeAction",
     "ValuationMetric",
     "WatchlistTarget",
     # Session management

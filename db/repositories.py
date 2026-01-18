@@ -15,7 +15,10 @@ from db.models import (
     Asset,
     AssetStatus,
     Position,
+    PositionState,
     PriceDaily,
+    Trade,
+    TradeAction,
     ValuationMetric,
 )
 
@@ -385,3 +388,201 @@ class ValuationRepository:
         self.session.add(valuation)
         self.session.flush()
         return valuation
+
+
+class TradeRepository:
+    """Repository for trade operations."""
+    
+    def __init__(self, session: Session):
+        self.session = session
+    
+    def create_trade(
+        self,
+        asset_id: int,
+        trade_date: str,
+        action: TradeAction,
+        shares: float,
+        price: float,
+        fees: float = 0.0,
+        realized_pnl: float = 0.0,
+    ) -> Trade:
+        """Create a new trade record."""
+        trade = Trade(
+            asset_id=asset_id,
+            trade_date=trade_date,
+            action=action,
+            shares=shares,
+            price=price,
+            fees=fees,
+            realized_pnl=realized_pnl,
+        )
+        self.session.add(trade)
+        self.session.flush()
+        return trade
+    
+    def get_trades_for_asset(
+        self,
+        asset_id: int,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> Sequence[Trade]:
+        """Get trades for an asset within optional date range."""
+        stmt = (
+            select(Trade)
+            .where(Trade.asset_id == asset_id)
+        )
+        
+        if start_date:
+            stmt = stmt.where(Trade.trade_date >= start_date)
+        if end_date:
+            stmt = stmt.where(Trade.trade_date <= end_date)
+        
+        stmt = stmt.order_by(Trade.trade_date.desc(), Trade.id.desc())
+        return self.session.scalars(stmt).all()
+    
+    def get_all_trades(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        action: TradeAction | None = None,
+        limit: int | None = None,
+    ) -> Sequence[Trade]:
+        """Get all trades with optional filters."""
+        stmt = select(Trade).options(joinedload(Trade.asset))
+        
+        if start_date:
+            stmt = stmt.where(Trade.trade_date >= start_date)
+        if end_date:
+            stmt = stmt.where(Trade.trade_date <= end_date)
+        if action:
+            stmt = stmt.where(Trade.action == action)
+        
+        stmt = stmt.order_by(Trade.trade_date.desc(), Trade.id.desc())
+        
+        if limit:
+            stmt = stmt.limit(limit)
+        
+        return self.session.scalars(stmt).all()
+    
+    def get_realized_pnl_summary(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, float]:
+        """Get realized P&L summary across all trades."""
+        stmt = select(
+            func.sum(Trade.realized_pnl).label("total_realized"),
+            func.sum(func.abs(Trade.fees)).label("total_fees"),
+        )
+        
+        if start_date:
+            stmt = stmt.where(Trade.trade_date >= start_date)
+        if end_date:
+            stmt = stmt.where(Trade.trade_date <= end_date)
+        
+        result = self.session.execute(stmt).first()
+        
+        return {
+            "total_realized_pnl": result.total_realized or 0.0,
+            "total_fees": result.total_fees or 0.0,
+            "net_realized_pnl": (result.total_realized or 0.0) - (result.total_fees or 0.0),
+        }
+
+
+class PositionStateRepository:
+    """Repository for position state operations."""
+    
+    def __init__(self, session: Session):
+        self.session = session
+    
+    def get_by_asset_id(self, asset_id: int) -> PositionState | None:
+        """Get position state for an asset."""
+        return self.session.get(PositionState, asset_id)
+    
+    def get_or_create(self, asset_id: int) -> tuple[PositionState, bool]:
+        """Get existing position state or create a new one."""
+        state = self.get_by_asset_id(asset_id)
+        if state:
+            return state, False
+        
+        state = PositionState(asset_id=asset_id)
+        self.session.add(state)
+        self.session.flush()
+        return state, True
+    
+    def get_all_active_positions(self) -> Sequence[PositionState]:
+        """Get all position states with non-zero long or short shares."""
+        stmt = (
+            select(PositionState)
+            .options(joinedload(PositionState.asset))
+            .where(
+                (PositionState.long_shares > 0) | (PositionState.short_shares > 0)
+            )
+            .order_by(PositionState.asset_id)
+        )
+        return self.session.scalars(stmt).all()
+    
+    def get_position_summary(self) -> list[dict]:
+        """
+        Get position summary for analytics (replaces old position aggregation).
+        
+        Returns list of dicts with ticker, long/short shares, avg costs, etc.
+        """
+        stmt = (
+            select(
+                Asset.ticker,
+                Asset.id.label("asset_id"),
+                PositionState.long_shares,
+                PositionState.long_avg_cost,
+                PositionState.short_shares,
+                PositionState.short_avg_price,
+                PositionState.realized_pnl,
+            )
+            .select_from(PositionState)
+            .join(Asset, Asset.id == PositionState.asset_id)
+            .where(
+                Asset.status == AssetStatus.OWNED,
+                (PositionState.long_shares > 0) | (PositionState.short_shares > 0)
+            )
+        )
+        
+        results = self.session.execute(stmt).all()
+        return [
+            {
+                "asset_id": r.asset_id,
+                "ticker": r.ticker,
+                "long_shares": r.long_shares,
+                "long_avg_cost": r.long_avg_cost or 0.0,
+                "short_shares": r.short_shares,
+                "short_avg_price": r.short_avg_price or 0.0,
+                "realized_pnl": r.realized_pnl,
+            }
+            for r in results
+        ]
+    
+    def update_state(
+        self,
+        asset_id: int,
+        long_shares: float | None = None,
+        long_avg_cost: float | None = None,
+        short_shares: float | None = None,
+        short_avg_price: float | None = None,
+        realized_pnl: float | None = None,
+    ) -> PositionState:
+        """Update position state fields."""
+        state, _ = self.get_or_create(asset_id)
+        
+        if long_shares is not None:
+            state.long_shares = long_shares
+        if long_avg_cost is not None:
+            state.long_avg_cost = long_avg_cost
+        if short_shares is not None:
+            state.short_shares = short_shares
+        if short_avg_price is not None:
+            state.short_avg_price = short_avg_price
+        if realized_pnl is not None:
+            state.realized_pnl = realized_pnl
+        
+        self.session.flush()
+        return state
+

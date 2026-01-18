@@ -2,10 +2,11 @@
 Portfolio analytics module.
 
 FR-4: Portfolio Metrics
-- Market value per position
-- Unrealized P&L
-- Portfolio allocation weight (%)
-- Total portfolio value
+- Market value per position (long and short)
+- Unrealized P&L (long and short)
+- Portfolio allocation weights (gross and net exposure)
+- Total portfolio value (long, short, net, gross)
+- Realized P&L tracking
 """
 
 from dataclasses import dataclass
@@ -14,31 +15,55 @@ from typing import Sequence
 import pandas as pd
 
 from db import get_db
-from db.repositories import PositionRepository, PriceRepository
+from db.repositories import PositionStateRepository, PriceRepository, TradeRepository
 
 
 @dataclass
 class PositionMetrics:
-    """Metrics for a single position."""
+    """Metrics for a single position (long/short)."""
     ticker: str
     asset_id: int
-    shares: float
-    buy_price: float
+    long_shares: float
+    long_avg_cost: float
+    short_shares: float
+    short_avg_price: float
     current_price: float
-    cost: float
-    market_value: float
-    unrealized_pnl: float
-    unrealized_pnl_pct: float
-    weight: float  # Portfolio allocation weight
+    # Long exposure
+    long_cost: float
+    long_market_value: float
+    long_unrealized_pnl: float
+    # Short exposure
+    short_cost: float  # Average entry price * shares
+    short_market_value: float  # Absolute market value
+    short_unrealized_pnl: float
+    # Net/Gross
+    net_shares: float
+    net_exposure: float
+    gross_exposure: float
+    total_unrealized_pnl: float
+    realized_pnl: float
+    # Weights
+    gross_weight: float
+    net_weight: float
 
 
 @dataclass
 class PortfolioSummary:
     """Aggregated portfolio-level metrics."""
-    total_cost: float
-    total_market_value: float
+    # Long exposure
+    long_total_cost: float
+    long_market_value: float
+    long_unrealized_pnl: float
+    # Short exposure
+    short_total_cost: float
+    short_market_value: float
+    short_unrealized_pnl: float
+    # Net/Gross/Total
+    gross_exposure: float
+    net_exposure: float
     total_unrealized_pnl: float
-    total_unrealized_pnl_pct: float
+    total_realized_pnl: float
+    total_pnl: float  # Realized + Unrealized
     position_count: int
 
 
@@ -46,14 +71,15 @@ class PortfolioAnalyzer:
     """
     Analyzes portfolio positions and calculates metrics.
     
-    FR-4 Implementation:
-    - Computes market value, P&L, allocation weights
-    - Handles missing price data gracefully
+    Supports long and short positions with:
+    - Average cost method for P&L
+    - Gross and net exposure calculations
+    - Realized and unrealized P&L tracking
     """
     
     def compute_portfolio(self) -> tuple[list[PositionMetrics], PortfolioSummary]:
         """
-        Compute portfolio metrics for all owned positions.
+        Compute portfolio metrics for all active positions (long/short).
         
         Returns:
             Tuple of (list of position metrics, portfolio summary).
@@ -64,11 +90,12 @@ class PortfolioAnalyzer:
         db = get_db()
         
         with db.session() as session:
-            position_repo = PositionRepository(session)
+            state_repo = PositionStateRepository(session)
             price_repo = PriceRepository(session)
+            trade_repo = TradeRepository(session)
             
-            # Get aggregated position data
-            position_data = position_repo.get_position_summary()
+            # Get position state data
+            position_data = state_repo.get_position_summary()
             
             if not position_data:
                 raise ValueError("No positions found in portfolio.")
@@ -76,47 +103,108 @@ class PortfolioAnalyzer:
             # Get latest prices
             asset_ids = [p["asset_id"] for p in position_data]
             latest_prices = price_repo.get_latest_prices_for_assets(asset_ids)
+            
+            # Get realized P&L summary
+            realized_summary = trade_repo.get_realized_pnl_summary()
         
-        # Calculate metrics
+        # Calculate metrics per position
         positions: list[PositionMetrics] = []
-        total_market_value = 0.0
+        
+        # Accumulators
+        total_gross_exposure = 0.0
+        long_mv_sum = 0.0
+        short_mv_sum = 0.0
+        long_cost_sum = 0.0
+        short_cost_sum = 0.0
+        long_unrl_sum = 0.0
+        short_unrl_sum = 0.0
         
         for pos in position_data:
             asset_id = pos["asset_id"]
             price_record = latest_prices.get(asset_id)
-            current_price = price_record.close if price_record else pos["avg_buy_price"]
             
-            market_value = pos["total_shares"] * current_price
-            total_market_value += market_value
+            # Use latest price or fall back to avg cost for long, avg price for short
+            if price_record:
+                current_price = price_record.close
+            else:
+                # Fallback: use long avg cost if long, or short avg price if only short
+                if pos["long_shares"] > 0:
+                    current_price = pos["long_avg_cost"]
+                elif pos["short_shares"] > 0:
+                    current_price = pos["short_avg_price"]
+                else:
+                    current_price = 0.0
+            
+            # Long calculations
+            long_shares = pos["long_shares"]
+            long_avg_cost = pos["long_avg_cost"]
+            long_cost = long_shares * long_avg_cost if long_shares > 0 else 0.0
+            long_mv = long_shares * current_price
+            long_unrl = long_mv - long_cost
+            
+            # Short calculations
+            short_shares = pos["short_shares"]
+            short_avg_price = pos["short_avg_price"]
+            short_cost = short_shares * short_avg_price if short_shares > 0 else 0.0
+            short_mv = short_shares * current_price  # Absolute exposure
+            short_unrl = short_cost - short_mv  # Profit when price drops
+            
+            # Net and gross
+            net_shares = long_shares - short_shares
+            net_exposure = long_mv - short_mv
+            gross_exposure = long_mv + short_mv
+            total_unrl = long_unrl + short_unrl
+            
+            # Accumulate for weights
+            total_gross_exposure += gross_exposure
+            long_mv_sum += long_mv
+            short_mv_sum += short_mv
+            long_cost_sum += long_cost
+            short_cost_sum += short_cost
+            long_unrl_sum += long_unrl
+            short_unrl_sum += short_unrl
             
             positions.append(PositionMetrics(
                 ticker=pos["ticker"],
                 asset_id=asset_id,
-                shares=pos["total_shares"],
-                buy_price=pos["avg_buy_price"],
+                long_shares=long_shares,
+                long_avg_cost=long_avg_cost,
+                short_shares=short_shares,
+                short_avg_price=short_avg_price,
                 current_price=current_price,
-                cost=pos["total_cost"],
-                market_value=market_value,
-                unrealized_pnl=0.0,  # Calculated after weights
-                unrealized_pnl_pct=0.0,
-                weight=0.0,
+                long_cost=long_cost,
+                long_market_value=long_mv,
+                long_unrealized_pnl=long_unrl,
+                short_cost=short_cost,
+                short_market_value=short_mv,
+                short_unrealized_pnl=short_unrl,
+                net_shares=net_shares,
+                net_exposure=net_exposure,
+                gross_exposure=gross_exposure,
+                total_unrealized_pnl=total_unrl,
+                realized_pnl=pos["realized_pnl"],
+                gross_weight=0.0,  # Calculated below
+                net_weight=0.0,
             ))
         
-        # Calculate P&L and weights
-        total_cost = sum(p.cost for p in positions)
-        total_pnl = 0.0
-        
+        # Calculate weights
         for pos in positions:
-            pos.weight = pos.market_value / total_market_value if total_market_value else 0.0
-            pos.unrealized_pnl = pos.market_value - pos.cost
-            pos.unrealized_pnl_pct = pos.unrealized_pnl / pos.cost if pos.cost else 0.0
-            total_pnl += pos.unrealized_pnl
+            pos.gross_weight = pos.gross_exposure / total_gross_exposure if total_gross_exposure else 0.0
+            # Net weight normalized by gross to avoid divide-by-small-net issues
+            pos.net_weight = pos.net_exposure / total_gross_exposure if total_gross_exposure else 0.0
         
         summary = PortfolioSummary(
-            total_cost=total_cost,
-            total_market_value=total_market_value,
-            total_unrealized_pnl=total_pnl,
-            total_unrealized_pnl_pct=total_pnl / total_cost if total_cost else 0.0,
+            long_total_cost=long_cost_sum,
+            long_market_value=long_mv_sum,
+            long_unrealized_pnl=long_unrl_sum,
+            short_total_cost=short_cost_sum,
+            short_market_value=short_mv_sum,
+            short_unrealized_pnl=short_unrl_sum,
+            gross_exposure=total_gross_exposure,
+            net_exposure=long_mv_sum - short_mv_sum,
+            total_unrealized_pnl=long_unrl_sum + short_unrl_sum,
+            total_realized_pnl=realized_summary["net_realized_pnl"],
+            total_pnl=long_unrl_sum + short_unrl_sum + realized_summary["net_realized_pnl"],
             position_count=len(positions),
         )
         
@@ -135,23 +223,34 @@ class PortfolioAnalyzer:
             {
                 "ticker": p.ticker,
                 "asset_id": p.asset_id,
-                "shares": p.shares,
-                "buy_price": p.buy_price,
+                "long_shares": p.long_shares,
+                "short_shares": p.short_shares,
+                "net_shares": p.net_shares,
                 "close": p.current_price,
-                "cost": p.cost,
-                "market_value": p.market_value,
-                "pnl": p.unrealized_pnl,
-                "pnl_pct": p.unrealized_pnl_pct,
-                "weight": p.weight,
+                "long_mv": p.long_market_value,
+                "short_mv": p.short_market_value,
+                "gross": p.gross_exposure,
+                "net": p.net_exposure,
+                "pnl": p.total_unrealized_pnl,
+                "realized_pnl": p.realized_pnl,
+                "gross_weight": p.gross_weight,
+                "net_weight": p.net_weight,
             }
             for p in positions
         ])
         
         summary_dict = {
-            "total_cost": summary.total_cost,
-            "total_market_value": summary.total_market_value,
-            "total_pnl": summary.total_unrealized_pnl,
-            "total_pnl_pct": summary.total_unrealized_pnl_pct,
+            "long_cost": summary.long_total_cost,
+            "long_mv": summary.long_market_value,
+            "long_pnl": summary.long_unrealized_pnl,
+            "short_cost": summary.short_total_cost,
+            "short_mv": summary.short_market_value,
+            "short_pnl": summary.short_unrealized_pnl,
+            "gross_exposure": summary.gross_exposure,
+            "net_exposure": summary.net_exposure,
+            "total_unrealized_pnl": summary.total_unrealized_pnl,
+            "total_realized_pnl": summary.total_realized_pnl,
+            "total_pnl": summary.total_pnl,
         }
         
         return df, summary_dict
@@ -189,10 +288,10 @@ def load_latest_prices() -> pd.DataFrame:
     db = get_db()
     
     with db.session() as session:
-        position_repo = PositionRepository(session)
+        state_repo = PositionStateRepository(session)
         price_repo = PriceRepository(session)
         
-        position_data = position_repo.get_position_summary()
+        position_data = state_repo.get_position_summary()
         asset_ids = [p["asset_id"] for p in position_data]
         latest_prices = price_repo.get_latest_prices_for_assets(asset_ids)
     
@@ -216,16 +315,18 @@ if __name__ == "__main__":
         df, summary = compute_portfolio()
         
         print("\n📊 Portfolio Summary")
-        for k, v in summary.items():
-            if "pct" in k:
-                print(f"  {k}: {v:.1%}")
-            else:
-                print(f"  {k}: ${v:,.2f}")
+        print(f"  Long MV: ${summary['long_mv']:,.2f}")
+        print(f"  Short MV: ${summary['short_mv']:,.2f}")
+        print(f"  Gross Exposure: ${summary['gross_exposure']:,.2f}")
+        print(f"  Net Exposure: ${summary['net_exposure']:,.2f}")
+        print(f"  Unrealized P&L: ${summary['total_unrealized_pnl']:+,.2f}")
+        print(f"  Realized P&L: ${summary['total_realized_pnl']:+,.2f}")
+        print(f"  Total P&L: ${summary['total_pnl']:+,.2f}")
         
         print("\n📈 Positions")
         print(df[[
-            "ticker", "shares", "buy_price", "close",
-            "market_value", "pnl", "pnl_pct", "weight"
+            "ticker", "long_shares", "short_shares", "net_shares",
+            "close", "gross", "pnl", "realized_pnl", "gross_weight"
         ]].to_string(index=False))
         
     except ValueError as e:
