@@ -114,8 +114,8 @@ def execute_trade(
                 status_message=f"❌ Asset not found: {ticker}\n   Use 'add-asset' to add it first.",
             )
         
-        # Update asset status to OWNED if currently WATCHLIST (for BUY/SHORT)
-        if action in (TradeAction.BUY, TradeAction.SHORT) and asset.status == AssetStatus.WATCHLIST:
+        # Update asset status to OWNED if currently WATCHLIST (for BUY/SELL)
+        if action in (TradeAction.BUY, TradeAction.SELL, TradeAction.SHORT) and asset.status == AssetStatus.WATCHLIST:
             asset_repo.update_status(asset.id, AssetStatus.OWNED)
             asset.status = AssetStatus.OWNED
             status_changed = True
@@ -129,68 +129,58 @@ def execute_trade(
         
         try:
             if action == TradeAction.BUY:
-                # Add to long position with average cost
-                if position.long_shares > 0:
-                    total_cost = position.long_shares * position.long_avg_cost + shares * price
-                    position.long_shares += shares
-                    position.long_avg_cost = total_cost / position.long_shares
-                else:
-                    position.long_shares = shares
-                    position.long_avg_cost = price
+                # If short shares exist, cover them first (like buying to close short)
+                if position.short_shares > 0:
+                    shares_to_cover = min(shares, position.short_shares)
+                    # Calculate realized P&L for covering short
+                    realized_pnl = shares_to_cover * (position.short_avg_price - price) - (fees * shares_to_cover / shares)
+                    position.short_shares -= shares_to_cover
+                    position.realized_pnl += realized_pnl
+                    
+                    # Clear avg price if fully closed
+                    if position.short_shares == 0:
+                        position.short_avg_price = None
+                    
+                    # Remaining shares go to long position
+                    shares -= shares_to_cover
+                
+                # Add remaining shares to long position with average cost
+                if shares > 0:
+                    if position.long_shares > 0:
+                        total_cost = position.long_shares * position.long_avg_cost + shares * price
+                        position.long_shares += shares
+                        position.long_avg_cost = total_cost / position.long_shares
+                    else:
+                        position.long_shares = shares
+                        position.long_avg_cost = price
             
             elif action == TradeAction.SELL:
-                # Reduce long position and calculate realized P&L
-                if shares > position.long_shares:
-                    return TradeResult(
-                        trade=None,
-                        asset=asset,
-                        position=position,
-                        success=False,
-                        action=action,
-                        errors=[f"Cannot sell {shares} shares; only {position.long_shares} shares held"],
-                        status_message=f"❌ Cannot sell {shares} shares; only {position.long_shares:.2f} shares held",
-                    )
+                # If long shares exist, sell them first
+                if position.long_shares > 0:
+                    shares_to_sell = min(shares, position.long_shares)
+                    # Calculate realized P&L (avg cost method)
+                    realized_pnl = shares_to_sell * (price - position.long_avg_cost) - (fees * shares_to_sell / shares)
+                    position.long_shares -= shares_to_sell
+                    position.realized_pnl += realized_pnl
+                    
+                    # Clear avg cost if fully closed
+                    if position.long_shares == 0:
+                        position.long_avg_cost = None
+                    
+                    # Remaining shares create short position
+                    shares -= shares_to_sell
                 
-                # Calculate realized P&L (avg cost method)
-                realized_pnl = shares * (price - position.long_avg_cost) - fees
-                position.long_shares -= shares
-                position.realized_pnl += realized_pnl
-                
-                # Clear avg cost if fully closed
-                if position.long_shares == 0:
-                    position.long_avg_cost = None
+                # Remaining shares open or add to short position
+                if shares > 0:
+                    if position.short_shares > 0:
+                        total_proceeds = position.short_shares * position.short_avg_price + shares * price
+                        position.short_shares += shares
+                        position.short_avg_price = total_proceeds / position.short_shares
+                    else:
+                        position.short_shares = shares
+                        position.short_avg_price = price
             
-            elif action == TradeAction.SHORT:
-                # Add to short position with average price
-                if position.short_shares > 0:
-                    total_proceeds = position.short_shares * position.short_avg_price + shares * price
-                    position.short_shares += shares
-                    position.short_avg_price = total_proceeds / position.short_shares
-                else:
-                    position.short_shares = shares
-                    position.short_avg_price = price
-            
-            elif action == TradeAction.COVER:
-                # Reduce short position and calculate realized P&L
-                if shares > position.short_shares:
-                    return TradeResult(
-                        trade=None,
-                        asset=asset,
-                        position=position,
-                        success=False,
-                        action=action,
-                        errors=[f"Cannot cover {shares} shares; only {position.short_shares} shares short"],
-                        status_message=f"❌ Cannot cover {shares} shares; only {position.short_shares:.2f} shares short",
-                    )
-                
-                # Calculate realized P&L for short cover
-                realized_pnl = shares * (position.short_avg_price - price) - fees
-                position.short_shares -= shares
-                position.realized_pnl += realized_pnl
-                
-                # Clear avg price if fully closed
-                if position.short_shares == 0:
-                    position.short_avg_price = None
+
             
             # Create trade record
             trade = trade_repo.create_trade(
@@ -212,6 +202,14 @@ def execute_trade(
             }
             
             status_message = f"✅ {action_verb[action]} {shares} shares of {ticker} @ ${price:.2f}"
+            
+            # Add position details
+            if position.long_shares > 0 and position.short_shares > 0:
+                status_message += f"\n   📊 Position: Long {position.long_shares:.2f} | Short {position.short_shares:.2f}"
+            elif position.long_shares > 0:
+                status_message += f"\n   📊 Position: {position.long_shares:.2f} shares @ ${position.long_avg_cost:.2f} avg"
+            elif position.short_shares > 0:
+                status_message += f"\n   📊 Short Position: {position.short_shares:.2f} shares @ ${position.short_avg_price:.2f} avg"
             
             if realized_pnl != 0:
                 status_message += f"\n   💰 Realized P&L: ${realized_pnl:+,.2f}"
@@ -252,7 +250,10 @@ def buy_position(
     fees: float = 0.0,
 ) -> TradeResult:
     """
-    Buy shares (open or add to long position).
+    Buy shares (covers short position if short, then adds to long position).
+    
+    If you have short shares, buying will first cover those shorts,
+    then any remaining shares will go into a long position.
     
     Example:
         >>> result = buy_position("AAPL", 100, 150.00, "2026-01-18")
@@ -268,10 +269,10 @@ def sell_position(
     fees: float = 0.0,
 ) -> TradeResult:
     """
-    Sell shares (reduce or close long position).
+    Sell shares (reduces long position if held, creates short position if selling more).
     
-    Validates that sufficient shares are held. Calculates realized P&L using
-    average cost method.
+    If you have long shares, selling will reduce those first. If you sell more
+    shares than you own, the excess creates a short position.
     
     Example:
         >>> result = sell_position("NVDA", 10, 180.00, "2026-01-18")
@@ -279,38 +280,7 @@ def sell_position(
     return execute_trade(ticker, TradeAction.SELL, shares, price, trade_date, fees)
 
 
-def short_position(
-    ticker: str,
-    shares: float,
-    price: float,
-    trade_date: str | None = None,
-    fees: float = 0.0,
-) -> TradeResult:
-    """
-    Short shares (open or add to short position).
-    
-    Example:
-        >>> result = short_position("TSLA", 50, 200.00, "2026-01-18")
-    """
-    return execute_trade(ticker, TradeAction.SHORT, shares, price, trade_date, fees)
 
-
-def cover_position(
-    ticker: str,
-    shares: float,
-    price: float,
-    trade_date: str | None = None,
-    fees: float = 0.0,
-) -> TradeResult:
-    """
-    Cover short shares (reduce or close short position).
-    
-    Validates that sufficient short shares exist. Calculates realized P&L.
-    
-    Example:
-        >>> result = cover_position("TSLA", 25, 190.00, "2026-01-18")
-    """
-    return execute_trade(ticker, TradeAction.COVER, shares, price, trade_date, fees)
 
 
 def print_trade_result(result: TradeResult) -> None:

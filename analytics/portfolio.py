@@ -188,10 +188,13 @@ class PortfolioAnalyzer:
             ))
         
         # Calculate weights
+        # For net weight, use sum of absolute net exposures to get weights that sum to 100%
+        total_abs_net_exposure = sum(abs(p.net_exposure) for p in positions)
+        
         for pos in positions:
             pos.gross_weight = pos.gross_exposure / total_gross_exposure if total_gross_exposure else 0.0
-            # Net weight normalized by gross to avoid divide-by-small-net issues
-            pos.net_weight = pos.net_exposure / total_gross_exposure if total_gross_exposure else 0.0
+            # Net weight using absolute values so it always sums to ~100%
+            pos.net_weight = abs(pos.net_exposure) / total_abs_net_exposure if total_abs_net_exposure else 0.0
         
         summary = PortfolioSummary(
             long_total_cost=long_cost_sum,

@@ -23,7 +23,10 @@ This project is designed for **long-term investors** who want:
 ### 💼 Portfolio Analytics
 - Cost-based portfolio construction
 - Market value, P&L, allocation weights
-- Supports multiple buy lots per position
+- Supports long and short positions
+- Simplified trading: Buy and Sell operations handle everything
+  - **Buy**: Covers short positions first, then adds to long
+  - **Sell**: Reduces long positions first, then creates shorts
 
 ### ⚠️ Risk Metrics
 - Historical volatility (annualized)
@@ -113,17 +116,28 @@ python main.py init
 python db/init_db.py --sample-data
 ```
 
-### 3️⃣ Add Assets and Positions
+### 3️⃣ Trading Operations
 
 ```bash
-# Add an asset to track
-python main.py add-asset AAPL --name "Apple Inc." --status OWNED
+# Buy shares (opens or adds to long position)
+python main.py buy AAPL --shares 100 --price 150.00 --date 2024-01-15
 
-# Add a position (buy lot)
-python main.py add-position AAPL --shares 100 --price 150.00 --date 2024-01-15
+# Sell shares (reduces long position or creates short)
+python main.py sell AAPL --shares 50 --price 170.00 --date 2024-06-15
 
-# List tracked assets
-python main.py list
+# Example: Selling more than you own creates a short
+python main.py sell AAPL --shares 150 --price 180.00
+# This closes 100 long shares and opens 50 short shares
+
+# Buying when short covers the short position first
+python main.py buy AAPL --shares 60 --price 175.00
+# This covers 50 short shares and opens 10 long shares
+
+# View trade history
+python main.py trades --limit 10
+
+# View realized P&L
+python main.py pnl --since 2024-01-01
 ```
 
 ### 4️⃣ Fetch Market Data

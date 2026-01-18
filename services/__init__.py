@@ -13,8 +13,6 @@ from services.position_service import (
     TradeResult,
     buy_position,
     sell_position,
-    short_position,
-    cover_position,
     print_trade_result,
 )
 
@@ -25,7 +23,5 @@ __all__ = [
     "TradeResult",
     "buy_position",
     "sell_position",
-    "short_position",
-    "cover_position",
     "print_trade_result",
 ]

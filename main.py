@@ -14,8 +14,12 @@ Usage:
     # Trading operations
     python main.py buy TSLA --shares 100 --price 150.00 --date 2024-01-15
     python main.py sell TSLA --shares 50 --price 170.00 --date 2024-06-15
-    python main.py short TSLA --shares 20 --price 250.00 --date 2024-03-01
-    python main.py cover TSLA --shares 10 --price 240.00 --date 2024-04-01
+    
+    # Selling more than you own creates a short position
+    python main.py sell TSLA --shares 120 --price 180.00  # Goes short 20 shares
+    
+    # Buying when short covers the short position first
+    python main.py buy TSLA --shares 30 --price 175.00  # Covers 20 short, buys 10 long
     
     # View trades and P&L
     python main.py trades --limit 10
@@ -43,10 +47,8 @@ from services.asset_service import (
 )
 from services.position_service import (
     buy_position,
-    cover_position,
     print_trade_result,
     sell_position,
-    short_position,
 )
 
 
@@ -67,7 +69,7 @@ def cmd_add_asset(args):
 
 
 def cmd_buy(args):
-    """Buy shares (open or add to long position)."""
+    """Buy shares (covers short position first if short, then goes long)."""
     result = buy_position(
         ticker=args.ticker,
         shares=args.shares,
@@ -79,7 +81,7 @@ def cmd_buy(args):
 
 
 def cmd_sell(args):
-    """Sell shares (reduce or close long position)."""
+    """Sell shares (reduces long position, or creates short if selling more than held)."""
     result = sell_position(
         ticker=args.ticker,
         shares=args.shares,
@@ -90,28 +92,7 @@ def cmd_sell(args):
     print_trade_result(result)
 
 
-def cmd_short(args):
-    """Short shares (open or add to short position)."""
-    result = short_position(
-        ticker=args.ticker,
-        shares=args.shares,
-        price=args.price,
-        trade_date=args.date,
-        fees=args.fees,
-    )
-    print_trade_result(result)
 
-
-def cmd_cover(args):
-    """Cover short shares (reduce or close short position)."""
-    result = cover_position(
-        ticker=args.ticker,
-        shares=args.shares,
-        price=args.price,
-        trade_date=args.date,
-        fees=args.fees,
-    )
-    print_trade_result(result)
 
 
 def cmd_update(args):
@@ -300,28 +281,12 @@ def main():
     buy.add_argument("--fees", type=float, default=0.0, help="Trading fees")
     
     # sell command
-    sell = subparsers.add_parser("sell", help="Sell shares (reduce/close long)")
+    sell = subparsers.add_parser("sell", help="Sell shares (reduces long, or creates short)")
     sell.add_argument("ticker", help="Stock ticker symbol")
     sell.add_argument("--shares", type=float, required=True, help="Number of shares")
     sell.add_argument("--price", type=float, required=True, help="Price per share")
     sell.add_argument("--date", help="Trade date (YYYY-MM-DD, default: today)")
     sell.add_argument("--fees", type=float, default=0.0, help="Trading fees")
-    
-    # short command
-    short = subparsers.add_parser("short", help="Short shares (open short)")
-    short.add_argument("ticker", help="Stock ticker symbol")
-    short.add_argument("--shares", type=float, required=True, help="Number of shares")
-    short.add_argument("--price", type=float, required=True, help="Price per share")
-    short.add_argument("--date", help="Trade date (YYYY-MM-DD, default: today)")
-    short.add_argument("--fees", type=float, default=0.0, help="Trading fees")
-    
-    # cover command
-    cover = subparsers.add_parser("cover", help="Cover short (reduce/close short)")
-    cover.add_argument("ticker", help="Stock ticker symbol")
-    cover.add_argument("--shares", type=float, required=True, help="Number of shares")
-    cover.add_argument("--price", type=float, required=True, help="Price per share")
-    cover.add_argument("--date", help="Trade date (YYYY-MM-DD, default: today)")
-    cover.add_argument("--fees", type=float, default=0.0, help="Trading fees")
     
     # update command
     subparsers.add_parser("update", help="Run daily data update")
@@ -357,8 +322,6 @@ def main():
         "add-asset": cmd_add_asset,
         "buy": cmd_buy,
         "sell": cmd_sell,
-        "short": cmd_short,
-        "cover": cmd_cover,
         "update": cmd_update,
         "dashboard": cmd_dashboard,
         "summary": cmd_summary,
