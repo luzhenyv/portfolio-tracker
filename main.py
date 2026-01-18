@@ -33,6 +33,8 @@ from db.repositories import AssetRepository, PositionRepository
 from services.asset_service import (
     create_asset_with_data,
     print_asset_creation_result,
+)
+from services.position_service import (
     create_position,
     print_position_creation_result,
 )
