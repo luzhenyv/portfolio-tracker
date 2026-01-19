@@ -324,3 +324,58 @@ class InvestmentThesis(Base):
 
     def __repr__(self) -> str:
         return f"<InvestmentThesis(asset_id={self.asset_id})>"
+
+
+class CashTransactionType(str, Enum):
+    """Type of cash transaction."""
+    DEPOSIT = "DEPOSIT"      # Cash deposit (initial capital, add funds)
+    WITHDRAW = "WITHDRAW"    # Cash withdrawal
+    BUY = "BUY"              # Cash out for buying securities
+    SELL = "SELL"            # Cash in from selling securities
+    COVER = "COVER"          # Cash out for covering short
+    SHORT = "SHORT"          # Cash in from shorting
+    FEE = "FEE"              # Trading fees (separate tracking)
+    DIVIDEND = "DIVIDEND"    # Dividend received
+    INTEREST = "INTEREST"    # Interest earned/paid
+
+
+class CashTransaction(Base):
+    """
+    Cash transaction ledger for tracking cash position changes.
+    
+    Records all cash inflows and outflows including:
+    - Deposits/withdrawals of capital
+    - Trade-related cash flows (buy/sell)
+    - Fees, dividends, interest
+    
+    Conventions:
+    - Positive amount = cash inflow (DEPOSIT, SELL, SHORT, DIVIDEND, INTEREST)
+    - Negative amount = cash outflow (WITHDRAW, BUY, COVER, FEE)
+    """
+    __tablename__ = "cash_transactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    transaction_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
+    transaction_type: Mapped[CashTransactionType] = mapped_column(
+        SQLEnum(CashTransactionType, native_enum=False, length=20),
+        nullable=False
+    )
+    amount: Mapped[float] = mapped_column(Float, nullable=False)  # Signed: + inflow, - outflow
+    trade_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("trades.id", ondelete="SET NULL"), nullable=True
+    )
+    description: Mapped[Optional[str]] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now(timezone.utc), nullable=False
+    )
+
+    # Relationships
+    trade: Mapped[Optional["Trade"]] = relationship("Trade")
+
+    __table_args__ = (
+        Index("idx_cash_transactions_date", "transaction_date"),
+        Index("idx_cash_transactions_type", "transaction_type"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<CashTransaction(id={self.id}, type={self.transaction_type}, amount={self.amount})>"

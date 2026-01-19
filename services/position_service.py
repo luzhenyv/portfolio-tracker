@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from db import Asset, AssetStatus, Position, Trade, TradeAction, get_db
-from db.repositories import AssetRepository, PositionRepository, TradeRepository
+from db.repositories import AssetRepository, CashRepository, PositionRepository, TradeRepository
 
 
 logger = logging.getLogger(__name__)
@@ -203,6 +203,10 @@ def execute_trade(
                 fees=fees,
                 realized_pnl=realized_pnl,
             )
+
+            # Record cash flow from trade
+            cash_repo = CashRepository(session)
+            cash_repo.record_trade_cash_flow(trade, fees=fees)
 
             # Recalculate and store net_invested from trade history
             position = position_repo.recalculate_net_invested(asset.id)

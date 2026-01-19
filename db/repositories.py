@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session, joinedload
 from db.models import (
     Asset,
     AssetStatus,
+    CashTransaction,
+    CashTransactionType,
     Position,
     PriceDaily,
     Trade,
@@ -633,4 +635,343 @@ class PositionRepository:
         results = self.session.execute(stmt).all()
         
         return {r.asset_id: r.net_invested for r in results}
+
+
+class CashRepository:
+    """
+    Repository for cash transaction operations.
+    
+    Manages cash position tracking including:
+    - Deposits/withdrawals
+    - Trade-related cash flows
+    - Cash balance calculations
+    """
+    
+    def __init__(self, session: Session):
+        self.session = session
+    
+    def create_transaction(
+        self,
+        transaction_date: str,
+        transaction_type: CashTransactionType,
+        amount: float,
+        trade_id: int | None = None,
+        description: str | None = None,
+    ) -> CashTransaction:
+        """
+        Create a new cash transaction.
+        
+        Args:
+            transaction_date: Date in YYYY-MM-DD format
+            transaction_type: Type of transaction
+            amount: Signed amount (+ inflow, - outflow)
+            trade_id: Optional reference to related trade
+            description: Optional description
+            
+        Returns:
+            Created CashTransaction
+        """
+        transaction = CashTransaction(
+            transaction_date=transaction_date,
+            transaction_type=transaction_type,
+            amount=amount,
+            trade_id=trade_id,
+            description=description,
+        )
+        self.session.add(transaction)
+        self.session.flush()
+        return transaction
+    
+    def deposit(
+        self,
+        amount: float,
+        transaction_date: str | None = None,
+        description: str | None = None,
+    ) -> CashTransaction:
+        """
+        Record a cash deposit (capital injection).
+        
+        Args:
+            amount: Deposit amount (positive)
+            transaction_date: Date (defaults to today)
+            description: Optional description
+            
+        Returns:
+            Created CashTransaction
+        """
+        if amount <= 0:
+            raise ValueError("Deposit amount must be positive")
+        
+        if transaction_date is None:
+            transaction_date = datetime.now().strftime("%Y-%m-%d")
+        
+        return self.create_transaction(
+            transaction_date=transaction_date,
+            transaction_type=CashTransactionType.DEPOSIT,
+            amount=amount,
+            description=description or "Cash deposit",
+        )
+    
+    def withdraw(
+        self,
+        amount: float,
+        transaction_date: str | None = None,
+        description: str | None = None,
+    ) -> CashTransaction:
+        """
+        Record a cash withdrawal.
+        
+        Args:
+            amount: Withdrawal amount (positive, will be stored as negative)
+            transaction_date: Date (defaults to today)
+            description: Optional description
+            
+        Returns:
+            Created CashTransaction
+        """
+        if amount <= 0:
+            raise ValueError("Withdrawal amount must be positive")
+        
+        if transaction_date is None:
+            transaction_date = datetime.now().strftime("%Y-%m-%d")
+        
+        return self.create_transaction(
+            transaction_date=transaction_date,
+            transaction_type=CashTransactionType.WITHDRAW,
+            amount=-amount,  # Store as negative (outflow)
+            description=description or "Cash withdrawal",
+        )
+    
+    def record_trade_cash_flow(
+        self,
+        trade: Trade,
+        fees: float = 0.0,
+    ) -> list[CashTransaction]:
+        """
+        Record cash flow from a trade.
+        
+        BUY/COVER: Cash outflow = -(shares * price + fees)
+        SELL/SHORT: Cash inflow = +(shares * price - fees)
+        
+        Args:
+            trade: The Trade object
+            fees: Trading fees (recorded separately)
+            
+        Returns:
+            List of created CashTransactions (trade + optional fee)
+        """
+        transactions = []
+        ticker = trade.asset.ticker if trade.asset else "?"
+        gross = trade.shares * trade.price
+        
+        # Map trade action to cash transaction type
+        type_map = {
+            TradeAction.BUY: CashTransactionType.BUY,
+            TradeAction.SELL: CashTransactionType.SELL,
+            TradeAction.SHORT: CashTransactionType.SHORT,
+            TradeAction.COVER: CashTransactionType.COVER,
+        }
+        
+        tx_type = type_map[trade.action]
+        
+        # Calculate signed amount
+        if trade.action in (TradeAction.BUY, TradeAction.COVER):
+            # Cash outflow
+            amount = -gross
+            desc = f"{trade.action.value} {trade.shares} {ticker} @ ${trade.price:.2f}"
+        else:
+            # Cash inflow (SELL, SHORT)
+            amount = +gross
+            desc = f"{trade.action.value} {trade.shares} {ticker} @ ${trade.price:.2f}"
+        
+        # Record main trade cash flow
+        tx = self.create_transaction(
+            transaction_date=trade.trade_date,
+            transaction_type=tx_type,
+            amount=amount,
+            trade_id=trade.id,
+            description=desc,
+        )
+        transactions.append(tx)
+        
+        # Record fees separately if present
+        if fees > 0:
+            fee_tx = self.create_transaction(
+                transaction_date=trade.trade_date,
+                transaction_type=CashTransactionType.FEE,
+                amount=-fees,  # Fees are always outflow
+                trade_id=trade.id,
+                description=f"Trading fee for {ticker}",
+            )
+            transactions.append(fee_tx)
+        
+        return transactions
+    
+    def get_all_transactions(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        transaction_type: CashTransactionType | None = None,
+        limit: int | None = None,
+    ) -> Sequence[CashTransaction]:
+        """Get all cash transactions with optional filters."""
+        stmt = select(CashTransaction)
+        
+        if start_date:
+            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+        if end_date:
+            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+        if transaction_type:
+            stmt = stmt.where(CashTransaction.transaction_type == transaction_type)
+        
+        stmt = stmt.order_by(CashTransaction.transaction_date.desc(), CashTransaction.id.desc())
+        
+        if limit:
+            stmt = stmt.limit(limit)
+        
+        return self.session.scalars(stmt).all()
+    
+    def get_balance(
+        self,
+        as_of_date: str | None = None,
+    ) -> float:
+        """
+        Calculate cash balance as of a given date.
+        
+        Args:
+            as_of_date: Calculate balance up to this date (inclusive).
+                       If None, uses all transactions.
+                       
+        Returns:
+            Cash balance (sum of all signed amounts)
+        """
+        stmt = select(func.sum(CashTransaction.amount))
+        
+        if as_of_date:
+            stmt = stmt.where(CashTransaction.transaction_date <= as_of_date)
+        
+        result = self.session.scalar(stmt)
+        return result or 0.0
+    
+    def get_summary(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict:
+        """
+        Get cash flow summary for a period.
+        
+        Returns:
+            Dict with total_inflows, total_outflows, net_flow, 
+            starting_balance, ending_balance
+        """
+        # Calculate starting balance (before start_date)
+        starting_balance = 0.0
+        if start_date:
+            starting_balance = self.get_balance(as_of_date=start_date)
+            # Subtract transactions on start_date to get balance before
+            stmt = select(func.sum(CashTransaction.amount)).where(
+                CashTransaction.transaction_date == start_date
+            )
+            on_start = self.session.scalar(stmt) or 0.0
+            starting_balance -= on_start
+        
+        # Get transactions in range
+        stmt = select(CashTransaction.amount)
+        if start_date:
+            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+        if end_date:
+            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+        
+        amounts = self.session.scalars(stmt).all()
+        
+        total_inflows = sum(a for a in amounts if a > 0)
+        total_outflows = sum(abs(a) for a in amounts if a < 0)
+        net_flow = sum(amounts)
+        
+        # Ending balance
+        ending_balance = self.get_balance(as_of_date=end_date)
+        
+        return {
+            "starting_balance": starting_balance,
+            "ending_balance": ending_balance,
+            "total_inflows": total_inflows,
+            "total_outflows": total_outflows,
+            "net_flow": net_flow,
+        }
+    
+    def get_balance_by_type(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, float]:
+        """
+        Get cash flow breakdown by transaction type.
+        
+        Returns:
+            Dict mapping transaction type to total amount
+        """
+        stmt = select(
+            CashTransaction.transaction_type,
+            func.sum(CashTransaction.amount).label("total"),
+        ).group_by(CashTransaction.transaction_type)
+        
+        if start_date:
+            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+        if end_date:
+            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+        
+        results = self.session.execute(stmt).all()
+        
+        return {r.transaction_type.value: r.total or 0.0 for r in results}
+    
+    def get_ledger(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """
+        Get cash ledger with running balance.
+        
+        Returns list of dicts with date, type, amount, description, balance.
+        """
+        # Get starting balance before the period
+        starting_balance = 0.0
+        if start_date:
+            stmt = select(func.sum(CashTransaction.amount)).where(
+                CashTransaction.transaction_date < start_date
+            )
+            starting_balance = self.session.scalar(stmt) or 0.0
+        
+        # Get transactions in period (chronological order for running balance)
+        stmt = select(CashTransaction)
+        if start_date:
+            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+        if end_date:
+            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+        
+        stmt = stmt.order_by(CashTransaction.transaction_date, CashTransaction.id)
+        
+        transactions = self.session.scalars(stmt).all()
+        
+        # Build ledger with running balance
+        ledger = []
+        balance = starting_balance
+        
+        for tx in transactions:
+            balance += tx.amount
+            ledger.append({
+                "date": tx.transaction_date,
+                "type": tx.transaction_type.value,
+                "amount": tx.amount,
+                "description": tx.description or "",
+                "balance": balance,
+            })
+        
+        # If limit specified, return last N entries
+        if limit and len(ledger) > limit:
+            ledger = ledger[-limit:]
+        
+        return ledger
 

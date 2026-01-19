@@ -20,7 +20,6 @@ from analytics.risk import (
     AssetRiskMetrics,
     PortfolioRiskMetrics,
     compute_risk_metrics,
-    load_price_history,
 )
 from analytics.valuation import (
     ValuationAnalyzer,
@@ -53,7 +52,6 @@ __all__ = [
     "AssetRiskMetrics",
     "PortfolioRiskMetrics",
     "compute_risk_metrics",
-    "load_price_history",
     # Valuation
     "ValuationAnalyzer",
     "ValuationAssessment",

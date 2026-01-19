@@ -250,7 +250,6 @@ def cmd_trades(args):
 
 def cmd_pnl(args):
     """Show realized P&L summary."""
-    from db import init_db
     from db.repositories import TradeRepository
 
     db = init_db()
@@ -267,6 +266,118 @@ def cmd_pnl(args):
     print(f"   Total Realized P&L:  ${summary['total_realized_pnl']:>+12,.2f}")
     print(f"   Total Fees:          ${summary['total_fees']:>12,.2f}")
     print(f"   Net Realized P&L:    ${summary['net_realized_pnl']:>+12,.2f}")
+
+
+def cmd_cash(args):
+    """Show cash position and ledger."""
+    from db.repositories import CashRepository
+
+    db = init_db()
+
+    with db.session() as session:
+        cash_repo = CashRepository(session)
+
+        summary = cash_repo.get_summary(
+            start_date=args.since,
+            end_date=args.until,
+        )
+
+        print("\n💵 Cash Summary")
+        print("-" * 50)
+        if args.since or args.until:
+            print(f"   Starting Balance:    ${summary['starting_balance']:>12,.2f}")
+        print(f"   Total Inflows:       ${summary['total_inflows']:>12,.2f}")
+        print(f"   Total Outflows:      ${summary['total_outflows']:>12,.2f}")
+        print(f"   Net Flow:            ${summary['net_flow']:>+12,.2f}")
+        print(f"   Current Balance:     ${summary['ending_balance']:>12,.2f}")
+
+        # Show breakdown by type
+        by_type = cash_repo.get_balance_by_type(
+            start_date=args.since,
+            end_date=args.until,
+        )
+
+        if by_type:
+            print("\n📊 Breakdown by Type")
+            print("-" * 50)
+            for tx_type, amount in sorted(by_type.items()):
+                print(f"   {tx_type:<15}     ${amount:>+12,.2f}")
+
+        # Show recent transactions
+        if args.ledger:
+            ledger = cash_repo.get_ledger(
+                start_date=args.since,
+                end_date=args.until,
+                limit=args.limit,
+            )
+
+            if ledger:
+                print(f"\n📒 Cash Ledger (last {min(len(ledger), args.limit)})")
+                print("-" * 90)
+                print(f"{'Date':<12} {'Type':<10} {'Amount':>12} {'Balance':>12}   Description")
+                print("-" * 90)
+
+                for entry in ledger[-args.limit:]:
+                    print(
+                        f"{entry['date']:<12} {entry['type']:<10} ${entry['amount']:>+11,.2f} ${entry['balance']:>11,.2f}   {entry['description'][:30]}"
+                    )
+
+
+def cmd_cash_deposit(args):
+    """Deposit cash (add capital)."""
+    from db.repositories import CashRepository
+
+    db = init_db()
+
+    with db.session() as session:
+        cash_repo = CashRepository(session)
+
+        tx = cash_repo.deposit(
+            amount=args.amount,
+            transaction_date=args.date,
+            description=args.description,
+        )
+
+        balance = cash_repo.get_balance()
+
+    print(f"\n✅ Deposited ${args.amount:,.2f}")
+    print(f"   Date: {tx.transaction_date}")
+    if args.description:
+        print(f"   Description: {args.description}")
+    print(f"   💵 New Balance: ${balance:,.2f}")
+
+
+def cmd_cash_withdraw(args):
+    """Withdraw cash."""
+    from db import init_db
+    from db.repositories import CashRepository
+
+    db = init_db()
+
+    with db.session() as session:
+        cash_repo = CashRepository(session)
+
+        # Check balance first
+        current_balance = cash_repo.get_balance()
+        if args.amount > current_balance:
+            print(f"\n⚠️ Warning: Withdrawal ${args.amount:,.2f} exceeds balance ${current_balance:,.2f}")
+            if not args.force:
+                print("   Use --force to proceed anyway")
+                return
+
+        tx = cash_repo.withdraw(
+            amount=args.amount,
+            transaction_date=args.date,
+            description=args.description,
+        )
+
+        balance = cash_repo.get_balance()
+
+    print(f"\n✅ Withdrew ${args.amount:,.2f}")
+    print(f"   Date: {tx.transaction_date}")
+    if args.description:
+        print(f"   Description: {args.description}")
+    print(f"   💵 New Balance: ${balance:,.2f}")
 
 
 def main():
@@ -332,6 +443,26 @@ def main():
     pnl.add_argument("--since", help="Start date (YYYY-MM-DD)")
     pnl.add_argument("--until", help="End date (YYYY-MM-DD)")
 
+    # cash command
+    cash = subparsers.add_parser("cash", help="Show cash position and ledger")
+    cash.add_argument("--since", help="Start date (YYYY-MM-DD)")
+    cash.add_argument("--until", help="End date (YYYY-MM-DD)")
+    cash.add_argument("--ledger", action="store_true", help="Show transaction ledger")
+    cash.add_argument("--limit", type=int, default=20, help="Max ledger entries to show")
+
+    # deposit command
+    deposit = subparsers.add_parser("deposit", help="Deposit cash (add capital)")
+    deposit.add_argument("amount", type=float, help="Amount to deposit")
+    deposit.add_argument("--date", help="Transaction date (YYYY-MM-DD, default: today)")
+    deposit.add_argument("--description", help="Description of deposit")
+
+    # withdraw command
+    withdraw = subparsers.add_parser("withdraw", help="Withdraw cash")
+    withdraw.add_argument("amount", type=float, help="Amount to withdraw")
+    withdraw.add_argument("--date", help="Transaction date (YYYY-MM-DD, default: today)")
+    withdraw.add_argument("--description", help="Description of withdrawal")
+    withdraw.add_argument("--force", action="store_true", help="Allow negative balance")
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -349,6 +480,9 @@ def main():
         "list": cmd_list_assets,
         "trades": cmd_trades,
         "pnl": cmd_pnl,
+        "cash": cmd_cash,
+        "deposit": cmd_cash_deposit,
+        "withdraw": cmd_cash_withdraw,
     }
 
     return commands[args.command](args)
