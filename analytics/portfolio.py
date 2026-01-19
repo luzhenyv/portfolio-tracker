@@ -45,6 +45,8 @@ class PositionMetrics:
     # Net invested (adjusted by realized profits)
     net_invested: float
     net_invested_avg_cost: float
+    # Net invested P&L (market value - net invested)
+    net_invested_pnl: float
     # Weights
     gross_weight: float
     net_weight: float
@@ -68,6 +70,9 @@ class PortfolioSummary:
     total_realized_pnl: float
     total_pnl: float  # Realized + Unrealized
     position_count: int
+    # Net invested totals (adjusted by realized profits)
+    total_net_invested: float
+    total_net_invested_pnl: float
 
 
 class PortfolioAnalyzer:
@@ -124,6 +129,8 @@ class PortfolioAnalyzer:
         short_cost_sum = 0.0
         long_unrl_sum = 0.0
         short_unrl_sum = 0.0
+        total_net_invested_sum = 0.0
+        total_net_invested_pnl_sum = 0.0
         
         for pos in position_data:
             asset_id = pos["asset_id"]
@@ -169,6 +176,13 @@ class PortfolioAnalyzer:
             else:
                 net_invested_avg_cost = 0.0
             
+            # Net invested P&L: market value minus net invested capital
+            net_invested_pnl = long_mv - net_invested
+            
+            # Accumulate net invested totals
+            total_net_invested_sum += net_invested
+            total_net_invested_pnl_sum += net_invested_pnl
+            
             # Accumulate for weights
             total_gross_exposure += gross_exposure
             long_mv_sum += long_mv
@@ -199,6 +213,7 @@ class PortfolioAnalyzer:
                 realized_pnl=pos["realized_pnl"],
                 net_invested=net_invested,
                 net_invested_avg_cost=net_invested_avg_cost,
+                net_invested_pnl=net_invested_pnl,
                 gross_weight=0.0,  # Calculated below
                 net_weight=0.0,
             ))
@@ -225,6 +240,8 @@ class PortfolioAnalyzer:
             total_realized_pnl=realized_summary["net_realized_pnl"],
             total_pnl=long_unrl_sum + short_unrl_sum + realized_summary["net_realized_pnl"],
             position_count=len(positions),
+            total_net_invested=total_net_invested_sum,
+            total_net_invested_pnl=total_net_invested_pnl_sum,
         )
         
         return positions, summary
@@ -256,14 +273,17 @@ class PortfolioAnalyzer:
                 "net_weight": p.net_weight,
                 "net_invested": p.net_invested,
                 "net_invested_avg_cost": p.net_invested_avg_cost,
+                "net_invested_pnl": p.net_invested_pnl,
             }
             for p in positions
         ])
         
-        # Calculate total cost and market value
-        total_cost = summary.long_total_cost + summary.short_total_cost
+        # Calculate total cost and market value using net invested
+        # Net invested represents remaining capital after realized gains/losses
+        total_cost = summary.total_net_invested
         total_market_value = summary.long_market_value - summary.short_market_value  # Net value
-        total_pnl_pct = (summary.total_pnl / total_cost) if total_cost > 0 else 0.0
+        # P&L percentage based on net invested capital
+        total_pnl_pct = (summary.total_net_invested_pnl / total_cost) if total_cost > 0 else 0.0
         
         summary_dict = {
             "long_cost": summary.long_total_cost,
@@ -277,9 +297,10 @@ class PortfolioAnalyzer:
             "total_unrealized_pnl": summary.total_unrealized_pnl,
             "total_realized_pnl": summary.total_realized_pnl,
             "total_pnl": summary.total_pnl,
-            # Additional keys for UI compatibility
-            "total_cost": total_cost,
+            # Additional keys for UI compatibility - using net invested basis
+            "total_cost": total_cost,  # Net invested capital
             "total_market_value": total_market_value,
+            "total_pnl": summary.total_net_invested_pnl,  # P&L on remaining capital
             "total_pnl_pct": total_pnl_pct,
         }
         
