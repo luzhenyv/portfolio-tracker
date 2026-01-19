@@ -234,10 +234,6 @@ class PriceRepository:
         return count
 
 
-# Old PositionRepository removed - Position now managed via Trade ledger
-# Use PositionRepository (formerly PositionStateRepository) below
-
-
 class ValuationRepository:
     """Repository for valuation metrics operations."""
     
@@ -543,7 +539,7 @@ class PositionRepository:
     
     def get_net_invested_by_asset(self, asset_id: int) -> float:
         """
-        Calculate net invested amount for a single asset.
+        Calculate net invested amount for a single asset from trade history.
         
         Net invested = Σ(buy_shares * buy_price + buy_fees) - Σ(sell_shares * sell_price - sell_fees)
         
@@ -569,12 +565,37 @@ class PositionRepository:
         
         return net_invested
     
-    def get_net_invested_summary(self) -> dict[int, float]:
+    def recalculate_net_invested(self, asset_id: int) -> Position:
         """
-        Calculate net invested amount for all assets with positions.
+        Recalculate and store net_invested for an asset from trade history.
+        
+        This should be called after each trade to keep the position's
+        net_invested field in sync with the trade ledger.
+        
+        Net Invested Avg Cost = net_invested / long_shares
         
         Returns:
-            Dict mapping asset_id to net invested amount.
+            Updated Position with recalculated net_invested.
+        """
+        position, _ = self.get_or_create(asset_id)
+        
+        # Calculate net invested from trade history
+        net_invested = self.get_net_invested_by_asset(asset_id)
+        
+        # Store in position record
+        position.net_invested = net_invested
+        self.session.flush()
+        
+        return position
+    
+    def recalculate_all_net_invested(self) -> dict[int, float]:
+        """
+        Recalculate net_invested for all assets with positions.
+        
+        Useful for data migration or fixing historical records.
+        
+        Returns:
+            Dict mapping asset_id to updated net_invested values.
         """
         # Get all assets with active positions
         stmt = (
@@ -583,9 +604,27 @@ class PositionRepository:
         )
         asset_ids = self.session.scalars(stmt).all()
         
-        # Calculate net invested for each
-        return {
-            asset_id: self.get_net_invested_by_asset(asset_id)
-            for asset_id in asset_ids
-        }
+        result = {}
+        for asset_id in asset_ids:
+            position = self.recalculate_net_invested(asset_id)
+            result[asset_id] = position.net_invested
+        
+        return result
+    
+    def get_net_invested_summary(self) -> dict[int, float]:
+        """
+        Get net invested amount for all assets with positions.
+        
+        Returns stored net_invested values from positions table.
+        
+        Returns:
+            Dict mapping asset_id to net invested amount.
+        """
+        stmt = (
+            select(Position.asset_id, Position.net_invested)
+            .where((Position.long_shares > 0) | (Position.short_shares > 0))
+        )
+        results = self.session.execute(stmt).all()
+        
+        return {r.asset_id: r.net_invested for r in results}
 

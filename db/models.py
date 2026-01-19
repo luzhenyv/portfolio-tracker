@@ -207,6 +207,10 @@ class Position(Base):
     Maintains average cost for long positions and average price for short positions.
     Tracks cumulative realized P&L for reporting.
     Replaces old lot-based Position model - now uses Trade ledger for audit trail.
+    
+    Fields:
+        long_avg_cost: Tax basis - weighted average of purchase prices (for tax reporting)
+        net_invested: Cash still at risk = Total Cash Out - Total Cash In (for P&L display)
     """
     __tablename__ = "positions"
 
@@ -214,7 +218,8 @@ class Position(Base):
         Integer, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True
     )
     long_shares: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    long_avg_cost: Mapped[Optional[float]] = mapped_column(Float)
+    long_avg_cost: Mapped[Optional[float]] = mapped_column(Float)  # Tax basis
+    net_invested: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # Cash at risk
     short_shares: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     short_avg_price: Mapped[Optional[float]] = mapped_column(Float)
     realized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -234,6 +239,13 @@ class Position(Base):
     def gross_shares(self) -> float:
         """Gross shares (long + short)."""
         return self.long_shares + self.short_shares
+
+    @property
+    def net_invested_avg_cost(self) -> float | None:
+        """Net Invested Avg Cost = net_invested / long_shares."""
+        if self.long_shares > 0:
+            return self.net_invested / self.long_shares
+        return None
 
     def __repr__(self) -> str:
         return f"<Position(asset_id={self.asset_id}, long={self.long_shares}, short={self.short_shares})>"

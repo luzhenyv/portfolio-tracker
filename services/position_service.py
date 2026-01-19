@@ -24,10 +24,11 @@ logger = logging.getLogger(__name__)
 class TradeResult:
     """
     Result object for trade operations (buy/sell/short/cover).
-    
+
     Captures the outcome of a trade including position state changes,
     realized P&L, and any status transitions.
     """
+
     trade: Trade | None
     asset: Asset | None
     position: Position | None
@@ -49,7 +50,7 @@ def execute_trade(
 ) -> TradeResult:
     """
     Execute a trade (BUY/SELL/SHORT/COVER) with average cost accounting.
-    
+
     Args:
         ticker: Stock ticker symbol
         action: Trade action (BUY/SELL/SHORT/COVER)
@@ -57,10 +58,10 @@ def execute_trade(
         price: Price per share
         trade_date: Trade date in YYYY-MM-DD format (defaults to today)
         fees: Trading fees (optional)
-        
+
     Returns:
         TradeResult with detailed outcome information
-        
+
     Raises:
         ValueError: If shares <= 0 or price <= 0
     """
@@ -74,7 +75,7 @@ def execute_trade(
             errors=["Shares must be positive"],
             status_message="❌ Shares must be positive",
         )
-    
+
     if price <= 0:
         return TradeResult(
             trade=None,
@@ -85,24 +86,24 @@ def execute_trade(
             errors=["Price must be positive"],
             status_message="❌ Price must be positive",
         )
-    
+
     ticker = ticker.upper()
     status_changed = False
-    
+
     # Default to today's date if not specified
     if trade_date is None:
         trade_date = datetime.now().strftime("%Y-%m-%d")
-    
+
     db = get_db()
-    
+
     with db.session() as session:
         asset_repo = AssetRepository(session)
         position_repo = PositionRepository(session)
         trade_repo = TradeRepository(session)
-        
+
         # Validate asset exists
         asset = asset_repo.get_by_ticker(ticker)
-        
+
         if not asset:
             return TradeResult(
                 trade=None,
@@ -113,40 +114,45 @@ def execute_trade(
                 errors=[f"Asset not found: {ticker}"],
                 status_message=f"❌ Asset not found: {ticker}\n   Use 'add-asset' to add it first.",
             )
-        
+
         # Update asset status to OWNED if currently WATCHLIST (for BUY/SELL)
-        if action in (TradeAction.BUY, TradeAction.SELL, TradeAction.SHORT) and asset.status == AssetStatus.WATCHLIST:
+        if (
+            action in (TradeAction.BUY, TradeAction.SELL, TradeAction.SHORT)
+            and asset.status == AssetStatus.WATCHLIST
+        ):
             asset_repo.update_status(asset.id, AssetStatus.OWNED)
             asset.status = AssetStatus.OWNED
             status_changed = True
             logger.info(f"Updated {ticker} status from WATCHLIST to OWNED")
-        
+
         # Get or create position state
         position, _ = position_repo.get_or_create(asset.id)
-        
+
         # Calculate realized P&L and update state based on action
         realized_pnl = 0.0
-        
+
         # Store original shares for trade record
         original_shares = shares
-        
+
         try:
             if action == TradeAction.BUY:
                 # If short shares exist, cover them first (like buying to close short)
                 if position.short_shares > 0:
                     shares_to_cover = min(shares, position.short_shares)
                     # Calculate realized P&L for covering short
-                    realized_pnl = shares_to_cover * (position.short_avg_price - price) - (fees * shares_to_cover / shares)
+                    realized_pnl = shares_to_cover * (position.short_avg_price - price) - (
+                        fees * shares_to_cover / shares
+                    )
                     position.short_shares -= shares_to_cover
                     position.realized_pnl += realized_pnl
-                    
+
                     # Clear avg price if fully closed
                     if position.short_shares == 0:
                         position.short_avg_price = None
-                    
+
                     # Remaining shares go to long position
                     shares -= shares_to_cover
-                
+
                 # Add remaining shares to long position with average cost
                 if shares > 0:
                     if position.long_shares > 0:
@@ -156,35 +162,37 @@ def execute_trade(
                     else:
                         position.long_shares = shares
                         position.long_avg_cost = price
-            
+
             elif action == TradeAction.SELL:
                 # If long shares exist, sell them first
                 if position.long_shares > 0:
                     shares_to_sell = min(shares, position.long_shares)
                     # Calculate realized P&L (avg cost method)
-                    realized_pnl = shares_to_sell * (price - position.long_avg_cost) - (fees * shares_to_sell / shares)
+                    realized_pnl = shares_to_sell * (price - position.long_avg_cost) - (
+                        fees * shares_to_sell / shares
+                    )
                     position.long_shares -= shares_to_sell
                     position.realized_pnl += realized_pnl
-                    
+
                     # Clear avg cost if fully closed
                     if position.long_shares == 0:
                         position.long_avg_cost = None
-                    
+
                     # Remaining shares create short position
                     shares -= shares_to_sell
-                
+
                 # Remaining shares open or add to short position
                 if shares > 0:
                     if position.short_shares > 0:
-                        total_proceeds = position.short_shares * position.short_avg_price + shares * price
+                        total_proceeds = (
+                            position.short_shares * position.short_avg_price + shares * price
+                        )
                         position.short_shares += shares
                         position.short_avg_price = total_proceeds / position.short_shares
                     else:
                         position.short_shares = shares
                         position.short_avg_price = price
-            
 
-            
             # Create trade record
             trade = trade_repo.create_trade(
                 asset_id=asset.id,
@@ -195,7 +203,10 @@ def execute_trade(
                 fees=fees,
                 realized_pnl=realized_pnl,
             )
-            
+
+            # Recalculate and store net_invested from trade history
+            position = position_repo.recalculate_net_invested(asset.id)
+
             # Build status message
             action_verb = {
                 TradeAction.BUY: "Bought",
@@ -203,23 +214,14 @@ def execute_trade(
                 TradeAction.SHORT: "Shorted",
                 TradeAction.COVER: "Covered",
             }
-            
-            status_message = f"✅ {action_verb[action]} {original_shares} shares of {ticker} @ ${price:.2f}"
-            
-            # Calculate net invested avg cost for long positions
-            net_invested_avg_cost = None
-            if position.long_shares > 0:
-                # Calculate net invested: sum of all buy/sell transactions
-                trade_repo_for_calc = TradeRepository(session)
-                trades_for_asset = trade_repo_for_calc.get_trades_for_asset(asset.id)
-                net_invested = 0.0
-                for t in trades_for_asset:
-                    if t.action in (TradeAction.BUY, TradeAction.COVER):
-                        net_invested += t.shares * t.price + t.fees
-                    elif t.action in (TradeAction.SELL, TradeAction.SHORT):
-                        net_invested -= t.shares * t.price - t.fees
-                net_invested_avg_cost = net_invested / position.long_shares
-            
+
+            status_message = (
+                f"✅ {action_verb[action]} {original_shares} shares of {ticker} @ ${price:.2f}"
+            )
+
+            # Use stored net_invested_avg_cost property
+            net_invested_avg_cost = position.net_invested_avg_cost
+
             # Add position details
             if position.long_shares > 0 and position.short_shares > 0:
                 status_message += f"\n   📊 Position: Long {position.long_shares:.2f} | Short {position.short_shares:.2f}"
@@ -227,13 +229,13 @@ def execute_trade(
                 status_message += f"\n   📊 Position: {position.long_shares:.2f} shares @ ${net_invested_avg_cost:.2f} net avg cost"
             elif position.short_shares > 0:
                 status_message += f"\n   📊 Short Position: {position.short_shares:.2f} shares @ ${position.short_avg_price:.2f} avg"
-            
+
             if realized_pnl != 0:
                 status_message += f"\n   💰 Realized P&L: ${realized_pnl:+,.2f}"
-            
+
             if status_changed:
                 status_message += f"\n   📍 Status changed: WATCHLIST → OWNED"
-            
+
             return TradeResult(
                 trade=trade,
                 asset=asset,
@@ -245,7 +247,7 @@ def execute_trade(
                 errors=[],
                 status_message=status_message,
             )
-            
+
         except Exception as e:
             logger.error(f"Failed to execute {action} for {ticker}: {e}")
             return TradeResult(
@@ -268,10 +270,10 @@ def buy_position(
 ) -> TradeResult:
     """
     Buy shares (covers short position if short, then adds to long position).
-    
+
     If you have short shares, buying will first cover those shorts,
     then any remaining shares will go into a long position.
-    
+
     Example:
         >>> result = buy_position("AAPL", 100, 150.00, "2026-01-18")
     """
@@ -287,50 +289,42 @@ def sell_position(
 ) -> TradeResult:
     """
     Sell shares (reduces long position if held, creates short position if selling more).
-    
+
     If you have long shares, selling will reduce those first. If you sell more
     shares than you own, the excess creates a short position.
-    
+
     Example:
         >>> result = sell_position("NVDA", 10, 180.00, "2026-01-18")
     """
     return execute_trade(ticker, TradeAction.SELL, shares, price, trade_date, fees)
 
 
-
-
-
 def print_trade_result(result: TradeResult) -> None:
     """
     Print a formatted trade result to console.
-    
+
     Helper function for CLI usage to display results in a user-friendly way.
     """
     print(result.status_message)
-    
+
     if result.success and result.trade:
         print(f"   Date: {result.trade.trade_date}")
         if result.trade.fees > 0:
             print(f"   Fees: ${result.trade.fees:.2f}")
-        
+
         if result.position:
             state = result.position
             if state.long_shares > 0:
-                # Calculate net invested avg cost
-                from db import get_db
-                from db.repositories import PositionRepository
-                
-                db = get_db()
-                with db.session() as session:
-                    pos_repo = PositionRepository(session)
-                    net_invested = pos_repo.get_net_invested_by_asset(state.asset_id)
-                    net_invested_avg_cost = net_invested / state.long_shares if state.long_shares > 0 else 0.0
-                
-                print(f"   Long Position: {state.long_shares:.2f} shares @ ${net_invested_avg_cost:.2f} net avg cost")
+                # Use stored net_invested_avg_cost property
+                net_invested_avg_cost = state.net_invested_avg_cost or 0.0
+
+                print(
+                    f"   Long Position: {state.long_shares:.2f} shares @ ${net_invested_avg_cost:.2f} net avg cost"
+                )
                 print(f"   (Tax basis: ${state.long_avg_cost:.2f} avg cost)")
             if state.short_shares > 0:
-                print(f"   Short Position: {state.short_shares:.2f} shares @ ${state.short_avg_price:.2f} avg")
+                print(
+                    f"   Short Position: {state.short_shares:.2f} shares @ ${state.short_avg_price:.2f} avg"
+                )
             if state.realized_pnl != 0:
                 print(f"   Total Realized P&L: ${state.realized_pnl:+,.2f}")
-
-

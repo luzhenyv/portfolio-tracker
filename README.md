@@ -24,9 +24,31 @@ This project is designed for **long-term investors** who want:
 - Cost-based portfolio construction
 - Market value, P&L, allocation weights
 - Supports long and short positions
+- **Two cost tracking methods**:
+  - `long_avg_cost` — Tax basis (weighted average of purchase prices)
+  - `net_invested_avg_cost` — Cash still at risk for P&L display
 - Simplified trading: Buy and Sell operations handle everything
   - **Buy**: Covers short positions first, then adds to long
   - **Sell**: Reduces long positions first, then creates shorts
+
+#### Net Invested Avg Cost Formula
+
+```
+Net Invested Avg Cost = (Total Cash Out - Total Cash In) / Remaining Shares
+```
+
+**Example (TSLA):**
+| Action | Shares | Price | Cash Flow |
+|--------|--------|-------|-----------|
+| BUY    | 100    | $150  | -$15,000  |
+| SELL   | 20     | $250  | +$5,000   |
+| SELL   | 50     | $170  | +$8,500   |
+
+- **Remaining Shares**: 30
+- **Net Invested**: $15,000 - $5,000 - $8,500 = **$1,500**
+- **Net Invested Avg Cost**: $1,500 / 30 = **$50**
+
+This reflects your actual cash at risk, not the original purchase price.
 
 ### ⚠️ Risk Metrics
 - Historical volatility (annualized)
