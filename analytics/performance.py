@@ -12,6 +12,8 @@ from typing import Optional
 import pandas as pd
 import numpy as np
 
+from analytics.portfolio import PortfolioAnalyzer
+from analytics.risk import RiskAnalyzer
 from db import get_db, AssetStatus
 from db.repositories import AssetRepository, PriceRepository
 from config import config
@@ -48,6 +50,8 @@ class PerformanceAnalyzer:
     
     def __init__(self):
         self.config = config.risk
+        self.portfolio_analyzer = PortfolioAnalyzer()
+        self.risk_analyzer = RiskAnalyzer()
     
     def _annualize_return(
         self,
@@ -179,13 +183,8 @@ class PerformanceAnalyzer:
         Returns:
             PerformanceMetrics or None if insufficient data.
         """
-        from analytics.portfolio import PortfolioAnalyzer
-        from analytics.risk import RiskAnalyzer
-        
-        risk_analyzer = RiskAnalyzer()
-        
         # Get weights
-        weights = risk_analyzer.get_cost_based_weights()
+        weights = self.portfolio_analyzer.get_portfolio_weights()
         if weights.empty:
             return None
         
@@ -195,19 +194,19 @@ class PerformanceAnalyzer:
             start_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
         
         # Load price history
-        prices = risk_analyzer.load_price_history()
+        prices = self.risk_analyzer.load_price_history()
         if prices.empty:
             return None
         
         if start_date:
             prices = prices[prices["date"] >= start_date]
         
-        returns = risk_analyzer._compute_returns(prices)
+        returns = self.risk_analyzer._compute_returns(prices)
         if returns.empty:
             return None
         
         # Compute portfolio returns
-        portfolio_returns = risk_analyzer.compute_portfolio_returns(returns, weights)
+        portfolio_returns = self.risk_analyzer.compute_portfolio_returns(returns, weights)
         
         # Calculate metrics
         cumulative_return = (1 + portfolio_returns).prod() - 1

@@ -12,6 +12,8 @@ from analytics.portfolio import (
     compute_portfolio,
     load_positions,
     load_latest_prices,
+    portfolio_weights,
+    portfolio_weights_cost_based,
 )
 from analytics.risk import (
     RiskAnalyzer,
@@ -19,8 +21,6 @@ from analytics.risk import (
     PortfolioRiskMetrics,
     compute_risk_metrics,
     load_price_history,
-    portfolio_weights,
-    portfolio_weights_cost_based,
 )
 from analytics.valuation import (
     ValuationAnalyzer,
@@ -46,14 +46,14 @@ __all__ = [
     "compute_portfolio",
     "load_positions",
     "load_latest_prices",
+    "portfolio_weights",
+    "portfolio_weights_cost_based",
     # Risk
     "RiskAnalyzer",
     "AssetRiskMetrics",
     "PortfolioRiskMetrics",
     "compute_risk_metrics",
     "load_price_history",
-    "portfolio_weights",
-    "portfolio_weights_cost_based",
     # Valuation
     "ValuationAnalyzer",
     "ValuationAssessment",

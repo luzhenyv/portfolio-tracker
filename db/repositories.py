@@ -450,6 +450,7 @@ class PositionRepository:
                 Asset.id.label("asset_id"),
                 Position.long_shares,
                 Position.long_avg_cost,
+                Position.net_invested,
                 Position.short_shares,
                 Position.short_avg_price,
                 Position.realized_pnl,
@@ -469,6 +470,7 @@ class PositionRepository:
                 "ticker": r.ticker,
                 "long_shares": r.long_shares,
                 "long_avg_cost": r.long_avg_cost or 0.0,
+                "net_invested": r.net_invested or 0.0,
                 "short_shares": r.short_shares,
                 "short_avg_price": r.short_avg_price or 0.0,
                 "realized_pnl": r.realized_pnl,
@@ -502,40 +504,6 @@ class PositionRepository:
         self.session.flush()
         return position
     
-    def get_cost_based_summary(self) -> list[dict]:
-        """
-        Get position summary with total cost (for risk weighting).
-        
-        Returns list of dicts with ticker, long_shares, long_avg_cost, total_cost.
-        """
-        stmt = (
-            select(
-                Asset.ticker,
-                Asset.id.label("asset_id"),
-                Position.long_shares,
-                Position.long_avg_cost,
-                Position.short_shares,
-                Position.short_avg_price,
-            )
-            .select_from(Position)
-            .join(Asset, Asset.id == Position.asset_id)
-            .where(
-                Asset.status == AssetStatus.OWNED,
-                Position.long_shares > 0
-            )
-        )
-        
-        results = self.session.execute(stmt).all()
-        return [
-            {
-                "asset_id": r.asset_id,
-                "ticker": r.ticker,
-                "long_shares": r.long_shares,
-                "long_avg_cost": r.long_avg_cost or 0.0,
-                "total_cost": r.long_shares * (r.long_avg_cost or 0.0),
-            }
-            for r in results
-        ]
     
     def get_net_invested_by_asset(self, asset_id: int) -> float:
         """

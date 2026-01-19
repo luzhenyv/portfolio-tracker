@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS position_state (
     asset_id INTEGER PRIMARY KEY,
     long_shares REAL NOT NULL DEFAULT 0,
     long_avg_cost REAL,
+    net_invested REAL NOT NULL DEFAULT 0,
     short_shares REAL NOT NULL DEFAULT 0,
     short_avg_price REAL,
     realized_pnl REAL NOT NULL DEFAULT 0,

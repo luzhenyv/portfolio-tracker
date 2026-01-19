@@ -10,7 +10,7 @@ FR-4: Portfolio Metrics
 """
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Literal, Sequence
 
 import pandas as pd
 
@@ -84,7 +84,40 @@ class PortfolioAnalyzer:
     - Gross and net exposure calculations
     - Realized and unrealized P&L tracking
     """
-    
+
+    def get_portfolio_weights(
+        self, cost_tracking_method: Literal["net_invested", "long_avg_cost"] = "net_invested"
+    ) -> pd.Series:
+        """
+        Get cost-based portfolio weights.
+
+        Reflects original capital allocation decisions.
+
+        Args:
+            cost_tracking_method: Method for tracking costs.
+                - "net_invested": Use net invested capital (adjusted by realized P&L)
+                - "long_avg_cost": Use long shares * average cost
+
+        Returns:
+            Series with ticker index and weight values.
+        """
+        db = get_db()
+
+        with db.session() as session:
+            position_repo = PositionRepository(session)
+            position_data = position_repo.get_position_summary()
+
+        if not position_data:
+            return pd.Series(dtype=float)
+
+        df = pd.DataFrame(position_data)
+        if cost_tracking_method == "net_invested":
+            df["total_cost"] = df["net_invested"].abs()
+        else:  # long_avg_cost
+            df["total_cost"] = df["long_shares"] * df["long_avg_cost"]
+        df["weight"] = df["total_cost"] / df["total_cost"].sum()
+        return df.set_index("ticker")["weight"]
+
     def compute_portfolio(self) -> tuple[list[PositionMetrics], PortfolioSummary]:
         """
         Compute portfolio metrics for all active positions (long/short).
@@ -327,6 +360,22 @@ def load_positions() -> pd.DataFrame:
     """
     df, _ = compute_portfolio()
     return df
+
+
+def portfolio_weights() -> pd.Series:
+    """
+    Get cost-based portfolio weights.
+
+    Returns:
+        Series with ticker index and weight values.
+    """
+    analyzer = PortfolioAnalyzer()
+    return analyzer.get_portfolio_weights()
+
+
+def portfolio_weights_cost_based() -> pd.Series:
+    """Alias for portfolio_weights (backward compatibility)."""
+    return portfolio_weights()
 
 
 def load_latest_prices() -> pd.DataFrame:

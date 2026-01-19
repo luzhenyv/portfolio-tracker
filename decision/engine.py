@@ -21,9 +21,8 @@ from typing import Sequence
 import pandas as pd
 
 from config import config
-from analytics.portfolio import PortfolioAnalyzer, PositionMetrics
+from analytics.portfolio import PortfolioAnalyzer
 from analytics.risk import RiskAnalyzer
-from analytics.valuation import ValuationAnalyzer, ValuationSignal
 
 
 class PositionAction(str, Enum):
@@ -197,7 +196,7 @@ class DecisionEngine:
             List of PositionDecision for each position.
         """
         # Get portfolio weights
-        weights = self.risk_analyzer.get_cost_based_weights()
+        weights = self.portfolio_analyzer.get_portfolio_weights()
         
         if weights.empty:
             return []
