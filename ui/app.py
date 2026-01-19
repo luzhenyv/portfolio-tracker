@@ -8,8 +8,10 @@ FR-15: Portfolio Overview, Positions Detail, Watchlist/Valuation View
 
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 
-from db import init_db
+from db import init_db, get_db
+from db.repositories import CashRepository
 from analytics.portfolio import compute_portfolio
 from analytics.risk import compute_risk_metrics
 from analytics.valuation import run_valuation
@@ -103,6 +105,73 @@ def render_overview_page():
         "Positions",
         f"{len(portfolio_df)}",
     )
+    
+    st.divider()
+    
+    # Asset Allocation Pie Chart
+    st.subheader("📊 Asset Allocation")
+    
+    # Get cash balance
+    db = get_db()
+    with db.session() as session:
+        cash_repo = CashRepository(session)
+        cash_balance = cash_repo.get_balance()
+    
+    # Build allocation data: Cash + each stock's market value
+    allocation_data = []
+    
+    if cash_balance > 0:
+        allocation_data.append({"Asset": "Cash", "Value": cash_balance})
+    
+    for _, row in portfolio_df.iterrows():
+        # Use net market value (long - short)
+        market_value = row.get("net", 0)
+        if market_value > 0:
+            allocation_data.append({"Asset": row["ticker"], "Value": market_value})
+    
+    if allocation_data:
+        alloc_df = pd.DataFrame(allocation_data)
+        total_value = alloc_df["Value"].sum()
+        alloc_df["Percentage"] = alloc_df["Value"] / total_value * 100
+        
+        # Create pie chart
+        fig = px.pie(
+            alloc_df,
+            values="Value",
+            names="Asset",
+            title="",
+            hole=0.4,  # Donut chart style
+            color_discrete_sequence=px.colors.qualitative.Set2,
+        )
+        fig.update_traces(
+            textposition="inside",
+            textinfo="percent+label",
+            hovertemplate="<b>%{label}</b><br>Value: $%{value:,.0f}<br>Weight: %{percent}<extra></extra>",
+        )
+        fig.update_layout(
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+            margin=dict(t=20, b=20, l=20, r=20),
+            height=350,
+        )
+        
+        col_chart, col_table = st.columns([2, 1])
+        
+        with col_chart:
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col_table:
+            # Show allocation table
+            display_alloc = alloc_df.copy()
+            display_alloc["Value"] = display_alloc["Value"].apply(lambda x: f"${x:,.0f}")
+            display_alloc["Percentage"] = display_alloc["Percentage"].apply(lambda x: f"{x:.1f}%")
+            st.dataframe(
+                display_alloc,
+                hide_index=True,
+            )
+            st.metric("Total", format_currency(total_value))
+    else:
+        st.info("No assets to display. Add cash or positions.")
     
     st.divider()
     
