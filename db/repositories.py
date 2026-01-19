@@ -233,6 +233,44 @@ class PriceRepository:
         self.session.flush()
         return count
 
+    def get_price_history_for_assets(
+        self,
+        asset_ids: list[int] | None = None,
+        status: AssetStatus | None = None,
+    ) -> list[dict]:
+        """
+        Get price history for multiple assets (FR-5).
+
+        Returns:
+            List of dicts with [date, ticker, adjusted_close].
+        """
+        stmt = (
+            select(
+                PriceDaily.date,
+                Asset.ticker,
+                PriceDaily.adjusted_close,
+            )
+            .join(Asset, PriceDaily.asset_id == Asset.id)
+            .where(PriceDaily.adjusted_close.is_not(None))
+        )
+
+        if asset_ids:
+            stmt = stmt.where(Asset.id.in_(asset_ids))
+        if status:
+            stmt = stmt.where(Asset.status == status)
+
+        stmt = stmt.order_by(PriceDaily.date)
+
+        results = self.session.execute(stmt).all()
+        return [
+            {
+                "date": r.date,
+                "ticker": r.ticker,
+                "adjusted_close": r.adjusted_close,
+            }
+            for r in results
+        ]
+
 
 class ValuationRepository:
     """Repository for valuation metrics operations."""

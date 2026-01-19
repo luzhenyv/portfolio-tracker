@@ -98,44 +98,6 @@ class RiskAnalyzer:
         drawdown = (cumulative - peak) / peak
         return float(drawdown.min())
 
-    def load_price_history(self, asset_ids: list[int] | None = None) -> pd.DataFrame:
-        """
-        Load price history for owned assets.
-
-        Args:
-            asset_ids: Optional list of asset IDs to filter.
-
-        Returns:
-            DataFrame with date, ticker, adjusted_close columns.
-        """
-        db = get_db()
-
-        with db.session() as session:
-            asset_repo = AssetRepository(session)
-
-            if asset_ids:
-                assets = [asset_repo.get_by_id(aid) for aid in asset_ids]
-                assets = [a for a in assets if a is not None]
-            else:
-                assets = list(asset_repo.get_by_status(AssetStatus.OWNED))
-
-            price_repo = PriceRepository(session)
-
-            records = []
-            for asset in assets:
-                prices = price_repo.get_price_history(asset.id)
-                for p in prices:
-                    if p.adjusted_close is not None:
-                        records.append(
-                            {
-                                "date": p.date,
-                                "ticker": asset.ticker,
-                                "adjusted_close": p.adjusted_close,
-                            }
-                        )
-
-        return pd.DataFrame(records)
-
     def compute_asset_risk(self, ticker: str, returns: pd.DataFrame) -> AssetRiskMetrics:
         """
         Compute risk metrics for a single asset.
@@ -209,7 +171,11 @@ class RiskAnalyzer:
             - portfolio_max_drawdown: Float
             - correlation: DataFrame correlation matrix
         """
-        prices = self.load_price_history()
+        db = get_db()
+        with db.session() as session:
+            price_repo = PriceRepository(session)
+            records = price_repo.get_price_history_for_assets(status=AssetStatus.OWNED)
+            prices = pd.DataFrame(records)
 
         if prices.empty:
             return {
@@ -263,17 +229,6 @@ def compute_risk_metrics() -> dict:
     """
     analyzer = RiskAnalyzer()
     return analyzer.compute_risk_metrics()
-
-
-def load_price_history() -> pd.DataFrame:
-    """
-    Load price history for owned assets.
-
-    Returns:
-        DataFrame with date, ticker, adjusted_close columns.
-    """
-    analyzer = RiskAnalyzer()
-    return analyzer.load_price_history()
 
 
 if __name__ == "__main__":

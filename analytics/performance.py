@@ -192,9 +192,14 @@ class PerformanceAnalyzer:
         start_date = None
         if lookback_days:
             start_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-        
+
         # Load price history
-        prices = self.risk_analyzer.load_price_history()
+        db = get_db()
+        with db.session() as session:
+            price_repo = PriceRepository(session)
+            records = price_repo.get_price_history_for_assets(status=AssetStatus.OWNED)
+            prices = pd.DataFrame(records)
+
         if prices.empty:
             return None
         
