@@ -212,7 +212,7 @@ def render_overview_page():
                     labels={"NAV": "Net Asset Value ($)", "Date": "Date"},
                 )
                 fig.update_traces(
-                    line_color="#1f77b4",
+                    line_color="#19D3F3",
                     line_width=2,
                     hovertemplate="<b>%{x}</b><br>NAV: $%{y:,.0f}<extra></extra>",
                 )
@@ -231,7 +231,7 @@ def render_overview_page():
                     height=300,
                 )
 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig)
             else:
                 st.info("No NAV history available. Add trades or cash transactions to see chart.")
     except Exception as e:

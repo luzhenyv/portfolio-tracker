@@ -346,7 +346,7 @@ class PerformanceAnalyzer:
         end_date: str,
     ) -> pd.DataFrame:
         """
-        Load and forward-fill price history.
+        Load and forward-fill price history for all assets.
 
         Args:
             price_repo: PriceRepository instance
@@ -358,13 +358,12 @@ class PerformanceAnalyzer:
         Returns:
             DataFrame with columns [date, ticker, close]
         """
-        price_records = price_repo.get_price_history_for_assets(asset_ids=asset_ids)
+        # Convert numpy.int64 to native Python int for SQLAlchemy compatibility
+        asset_ids_native = [int(x) for x in asset_ids] if asset_ids else []
+        
+        # Load ALL history to ensure we can forward-fill from before the lookback window
+        price_records = price_repo.get_price_history_for_assets(asset_ids=asset_ids_native)
         prices_df = pd.DataFrame(price_records)
-
-        if not prices_df.empty:
-            prices_df = prices_df[
-                (prices_df["date"] >= start_date) & (prices_df["date"] <= end_date)
-            ]
 
         return self._forward_fill_prices(prices_df, calendar)
 
@@ -413,11 +412,19 @@ class PerformanceAnalyzer:
             Merged DataFrame with positions and prices
         """
         if not position_filled.empty and not prices_filled.empty:
+            # Ensure types match before merge
+            position_filled["asset_id"] = position_filled["asset_id"].astype(int)
+            prices_filled["asset_id"] = prices_filled["asset_id"].astype(int)
+            
             merged = position_filled.merge(
                 prices_filled,
-                on=["date", "ticker"],
+                on=["date", "asset_id"],
                 how="left",
+                suffixes=("", "_price"),
             )
+            if "ticker_price" in merged.columns:
+                merged["ticker"] = merged["ticker"].fillna(merged["ticker_price"])
+                merged = merged.drop(columns=["ticker_price"])
         else:
             merged = position_filled.copy()
             if not merged.empty:
@@ -442,14 +449,19 @@ class PerformanceAnalyzer:
         """
         daily_navs: list[DailyNAV] = []
 
-        for date_str in sorted(cash_filled["date"].unique()):
-            cash_row = cash_filled[cash_filled["date"] == date_str]
-            cash = cash_row["cash"].values[0] if not cash_row.empty else 0.0
+        # Group merged data by date for faster lookup
+        merged_groups = {}
+        if not merged.empty:
+            # Drop rows with NaN close price if they have zero shares to keep it clean
+            # but keep them if we want to detect missing prices for owned assets
+            for date, group in merged.groupby("date"):
+                merged_groups[date] = group
 
-            # Get positions for this date
-            date_positions = (
-                merged[merged["date"] == date_str] if not merged.empty else pd.DataFrame()
-            )
+        for _, cash_row in cash_filled.iterrows():
+            date_str = cash_row["date"]
+            cash = cash_row["cash"]
+
+            date_positions = merged_groups.get(date_str, pd.DataFrame())
 
             long_value = 0.0
             short_value = 0.0
@@ -461,9 +473,10 @@ class PerformanceAnalyzer:
                 short_shares = pos.get("short_shares", 0.0) or 0.0
                 price = pos.get("close", None)
 
-                if price is not None and not np.isnan(price):
-                    long_mv = long_shares * price
-                    short_mv = short_shares * price
+                # CRITICAL: Use pd.notna to catch all null-like values
+                if pd.notna(price):
+                    long_mv = long_shares * float(price)
+                    short_mv = short_shares * float(price)
                     long_value += long_mv
                     short_value += short_mv
 
@@ -471,13 +484,12 @@ class PerformanceAnalyzer:
                         pos_details[ticker] = {
                             "long_shares": long_shares,
                             "short_shares": short_shares,
-                            "price": price,
+                            "price": float(price),
                             "long_value": long_mv,
                             "short_value": short_mv,
                         }
 
             nav = long_value - short_value + cash
-
             daily_navs.append(
                 DailyNAV(
                     date=date_str,
@@ -611,27 +623,42 @@ class PerformanceAnalyzer:
         calendar: pd.DatetimeIndex,
     ) -> pd.DataFrame:
         """
-        Forward-fill prices to cover weekends/holidays.
+        Forward-fill prices to cover weekends/holidays and history gaps.
 
-        Input: DataFrame with columns [date, ticker, close]
+        Input: DataFrame with columns [date, asset_id, ticker, close]
         Output: DataFrame with all calendar dates, forward-filled prices
         """
         if prices_df.empty:
-            return pd.DataFrame(columns=["date", "ticker", "close"])
+            return pd.DataFrame(columns=["date", "asset_id", "ticker", "close"])
 
-        # Pivot to wide format: date x ticker
+        # Mapping for asset_id to ticker (using strings to avoid type issues)
+        prices_df["asset_id_str"] = prices_df["asset_id"].astype(str)
+        id_to_ticker = prices_df.set_index("asset_id_str")["ticker"].to_dict()
+
+        # Pivot to wide format: Index=date, Columns=asset_id
         prices_df["date"] = pd.to_datetime(prices_df["date"])
-        wide = prices_df.pivot(index="date", columns="ticker", values="close")
+        pivoted = prices_df.pivot(index="date", columns="asset_id_str", values="close")
 
-        # Reindex to full calendar and forward-fill
-        wide = wide.reindex(calendar).ffill()
+        # To ensure we can ffill from before the calendar start:
+        full_index = pivoted.index.union(calendar)
+        filled = (
+            pivoted.reindex(full_index)
+            .sort_index()
+            .ffill()
+            .bfill()
+            .reindex(calendar)
+        )
 
         # Melt back to long format
-        wide = wide.reset_index().rename(columns={"index": "date"})
-        long = wide.melt(id_vars=["date"], var_name="ticker", value_name="close")
+        long = filled.reset_index().rename(columns={"index": "date"})
+        long = long.melt(id_vars=["date"], var_name="asset_id_str", value_name="close")
         long["date"] = long["date"].dt.strftime("%Y-%m-%d")
 
-        return long.dropna(subset=["close"])
+        # Restore original asset_id (int) and ticker
+        long["asset_id"] = long["asset_id_str"].astype(int)
+        long["ticker"] = long["asset_id_str"].map(id_to_ticker)
+        
+        return long.drop(columns=["asset_id_str"]).dropna(subset=["close"])
 
     def _forward_fill_positions(
         self,
@@ -642,7 +669,8 @@ class PerformanceAnalyzer:
         Forward-fill positions to cover all calendar dates.
 
         Input: DataFrame with columns [date, asset_id, ticker, long_shares, short_shares]
-        Output: Same columns for all calendar dates
+               May include trades before calendar start (for opening position computation)
+        Output: Same columns for all calendar dates in the window
         """
         if position_df.empty:
             return pd.DataFrame(
@@ -655,6 +683,10 @@ class PerformanceAnalyzer:
         # Get all unique assets
         assets = position_df[["asset_id", "ticker"]].drop_duplicates()
 
+        # Calendar bounds
+        cal_start = calendar.min()
+        cal_end = calendar.max()
+
         # For each asset, create full date range and forward-fill
         result_dfs = []
         for _, row in assets.iterrows():
@@ -664,8 +696,24 @@ class PerformanceAnalyzer:
             asset_df = position_df[position_df["asset_id"] == asset_id].copy()
             asset_df = asset_df.set_index("date")[["long_shares", "short_shares"]]
 
-            # Reindex to full calendar and forward-fill (0 before first trade)
-            asset_df = asset_df.reindex(calendar).ffill().fillna(0.0)
+            # Find trades before calendar start to compute opening position
+            pre_cal_trades = asset_df[asset_df.index < cal_start]
+            if not pre_cal_trades.empty:
+                # Get the last state before calendar start (opening position)
+                opening_position = pre_cal_trades.iloc[-1]
+                # Add it at the day before calendar start so ffill carries it forward
+                opening_date = cal_start - pd.Timedelta(days=1)
+                asset_df.loc[opening_date] = opening_position
+
+            # Reindex to calendar + any pre-calendar position date, then ffill
+            # Build extended index including the opening position date if it exists
+            full_index = asset_df.index.union(calendar)
+            asset_df = asset_df.reindex(full_index).sort_index().ffill().fillna(0.0)
+
+            # Filter to only calendar dates (drop any dates before calendar start)
+            asset_df = asset_df[asset_df.index >= cal_start]
+            asset_df = asset_df[asset_df.index <= cal_end]
+
             asset_df = asset_df.reset_index().rename(columns={"index": "date"})
             asset_df["asset_id"] = asset_id
             asset_df["ticker"] = ticker
@@ -755,12 +803,14 @@ class PerformanceAnalyzer:
             cash_repo = CashRepository(session)
             price_repo = PriceRepository(session)
 
-            # Load all trades chronologically
-            trades = list(trade_repo.list_all_chronological(start_date, end_date))
+            # Load ALL trades up to end_date (no start_date filter)
+            # This ensures we compute correct opening positions for assets
+            # bought before the lookback window
+            all_trades = list(trade_repo.list_all_chronological(end_date=end_date))
 
-            # Determine date range
+            # Determine date range (use all_trades to find earliest activity)
             start_date, end_date = self._determine_date_range(
-                trades, cash_repo, start_date, end_date
+                all_trades, cash_repo, start_date, end_date
             )
 
             if not start_date:
@@ -771,8 +821,9 @@ class PerformanceAnalyzer:
             if len(calendar) == 0:
                 return None
 
-            # Prepare position frame
-            position_filled = self._prepare_position_frame(trades, calendar, start_date, end_date)
+            # Prepare position frame using ALL trades (to get correct opening positions)
+            # but only output snapshots for dates in [start_date, end_date]
+            position_filled = self._prepare_position_frame(all_trades, calendar, start_date, end_date)
 
             # Get unique asset_ids for price lookup
             asset_ids = (

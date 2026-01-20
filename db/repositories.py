@@ -252,6 +252,7 @@ class PriceRepository:
         stmt = (
             select(
                 PriceDaily.date,
+                PriceDaily.asset_id,
                 Asset.ticker,
                 PriceDaily.close,
             )
@@ -270,6 +271,7 @@ class PriceRepository:
         return [
             {
                 "date": r.date,
+                "asset_id": r.asset_id,
                 "ticker": r.ticker,
                 "close": r.close,
             }
