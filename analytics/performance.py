@@ -1106,6 +1106,32 @@ def get_period_returns() -> dict[str, float | None]:
     return analyzer.get_period_returns()
 
 
+def get_nav_period_returns() -> dict[str, float | None]:
+    """
+    Get NAV-based returns for standard periods (1m, 3m, 6m, 1y).
+
+    Returns:
+        Dict of period returns computed from NAV time series.
+    """
+    analyzer = PerformanceAnalyzer()
+    return analyzer.get_nav_period_returns()
+
+
+def get_nav_series(lookback_days: int = 365) -> NAVSeries | None:
+    """
+    Get daily NAV time series for UI display.
+
+    Args:
+        lookback_days: Lookback period in days (default 365 = 1 year)
+
+    Returns:
+        NAVSeries with daily snapshots or None if insufficient data.
+    """
+    start_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    analyzer = PerformanceAnalyzer()
+    return analyzer.compute_nav_series(start_date=start_date)
+
+
 if __name__ == "__main__":
     from db import init_db
 
