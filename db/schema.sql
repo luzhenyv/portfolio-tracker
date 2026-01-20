@@ -106,3 +106,22 @@ CREATE TABLE IF NOT EXISTS position_state (
     FOREIGN KEY (asset_id) REFERENCES assets(id)
 );
 
+CREATE TABLE IF NOT EXISTS cash_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    transaction_date TEXT NOT NULL,
+    transaction_type TEXT CHECK(transaction_type IN ('DEPOSIT', 'WITHDRAW', 'BUY', 'SELL', 'COVER', 'SHORT', 'FEE', 'DIVIDEND', 'INTEREST')) NOT NULL,
+    amount REAL NOT NULL,
+    asset_id INTEGER,
+    trade_id INTEGER,
+    description TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE SET NULL,
+    FOREIGN KEY (trade_id) REFERENCES trades(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cash_transactions_date
+ON cash_transactions(transaction_date);
+CREATE INDEX IF NOT EXISTS idx_cash_transactions_type
+ON cash_transactions(transaction_type);
+CREATE INDEX IF NOT EXISTS idx_cash_transactions_asset
+ON cash_transactions(asset_id);
+

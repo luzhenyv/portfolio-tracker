@@ -104,10 +104,11 @@ class PerformanceAnalyzer:
         if not prices:
             return pd.Series(dtype=float)
         
+        # Use raw close prices for returns (dividends tracked separately in cash ledger)
         df = pd.DataFrame([
-            {"date": p.date, "close": p.adjusted_close or p.close}
+            {"date": p.date, "close": p.close}
             for p in prices
-            if p.adjusted_close or p.close
+            if p.close
         ])
         
         if df.empty:
@@ -148,8 +149,9 @@ class PerformanceAnalyzer:
         if len(prices) < 2:
             return None
         
-        first_price = prices[0].adjusted_close or prices[0].close
-        last_price = prices[-1].adjusted_close or prices[-1].close
+        # Use raw close prices for performance (dividends tracked separately)
+        first_price = prices[0].close
+        last_price = prices[-1].close
         
         if not first_price or not last_price:
             return None
@@ -251,6 +253,137 @@ class PerformanceAnalyzer:
             results[label] = perf.total_return if perf else None
         
         return results
+    
+    def get_dividend_anomalies(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[dict]:
+        """
+        Identify dividend entries that may be anomalous.
+        
+        Anomaly checks:
+        1. No holdings on dividend date (couldn't have received dividend)
+        2. Implied yield is extremely high (>20% quarterly)
+        3. Amount is negative (should always be positive inflow)
+        4. Asset not found (orphaned dividend)
+        
+        Args:
+            start_date: Start of period to check (YYYY-MM-DD)
+            end_date: End of period to check (YYYY-MM-DD)
+            
+        Returns:
+            List of dicts with dividend details and anomaly flags:
+            - id: transaction ID
+            - ticker: asset ticker (or None if orphaned)
+            - amount: dividend amount
+            - date: transaction date
+            - anomalies: list of anomaly descriptions
+            - implied_yield: computed yield vs close price (if available)
+        """
+        from db.repositories import CashRepository, TradeRepository
+        from db.models import CashTransactionType, TradeAction
+        
+        db = get_db()
+        anomalies = []
+        
+        with db.session() as session:
+            asset_repo = AssetRepository(session)
+            price_repo = PriceRepository(session)
+            cash_repo = CashRepository(session)
+            trade_repo = TradeRepository(session)
+            
+            # Get all dividends in range
+            dividends = cash_repo.get_dividends(
+                start_date=start_date,
+                end_date=end_date,
+            )
+            
+            for div in dividends:
+                anomaly_list = []
+                ticker = None
+                implied_yield = None
+                
+                # Check 1: Amount must be positive
+                if div.amount <= 0:
+                    anomaly_list.append(f"Negative amount: ${div.amount:.2f}")
+                
+                # Check 2: Asset should exist
+                if div.asset_id is None:
+                    anomaly_list.append("No asset attribution (orphaned dividend)")
+                else:
+                    asset = asset_repo.get_by_id(div.asset_id)
+                    if not asset:
+                        anomaly_list.append(f"Asset ID {div.asset_id} not found")
+                    else:
+                        ticker = asset.ticker
+                        
+                        # Check 3: Holdings on dividend date
+                        trades = trade_repo.get_trades_for_asset(
+                            asset_id=div.asset_id,
+                            end_date=div.transaction_date,
+                        )
+                        
+                        shares = 0.0
+                        for trade in reversed(list(trades)):
+                            if trade.action == TradeAction.BUY:
+                                shares += trade.shares
+                            elif trade.action == TradeAction.SELL:
+                                shares -= trade.shares
+                            elif trade.action == TradeAction.SHORT:
+                                shares -= trade.shares
+                            elif trade.action == TradeAction.COVER:
+                                shares += trade.shares
+                        
+                        if shares <= 0:
+                            anomaly_list.append(
+                                f"No holdings on {div.transaction_date} "
+                                f"(position: {shares:.2f} shares)"
+                            )
+                        
+                        # Check 4: Implied yield
+                        prices = price_repo.get_price_history(
+                            asset_id=div.asset_id,
+                            start_date=div.transaction_date,
+                            end_date=div.transaction_date,
+                        )
+                        
+                        if not prices:
+                            # Get most recent price before date
+                            all_prices = price_repo.get_price_history(
+                                asset_id=div.asset_id,
+                                end_date=div.transaction_date,
+                            )
+                            if all_prices:
+                                prices = [all_prices[-1]]
+                        
+                        if prices and prices[0].close:
+                            price = prices[0].close
+                            # Per-share yield (assuming amount is total dividend)
+                            if shares > 0 and price > 0:
+                                per_share_div = div.amount / shares
+                                implied_yield = per_share_div / price
+                                
+                                # Flag extreme yields (>20% quarterly = 80% annual)
+                                if implied_yield > 0.20:
+                                    anomaly_list.append(
+                                        f"Extreme yield: {implied_yield:.1%} per share "
+                                        f"(${per_share_div:.4f} / ${price:.2f})"
+                                    )
+                
+                # Only include if there are anomalies
+                if anomaly_list:
+                    anomalies.append({
+                        "id": div.id,
+                        "ticker": ticker,
+                        "amount": div.amount,
+                        "date": div.transaction_date,
+                        "description": div.description,
+                        "anomalies": anomaly_list,
+                        "implied_yield": implied_yield,
+                    })
+        
+        return anomalies
 
 
 def compute_performance_metrics(lookback_days: int | None = None) -> PerformanceMetrics | None:
@@ -278,6 +411,30 @@ def get_period_returns() -> dict[str, float | None]:
     return analyzer.get_period_returns()
 
 
+def get_dividend_anomalies(
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> list[dict]:
+    """
+    Get dividend entries with potential issues.
+    
+    Checks for:
+    - No holdings on dividend date
+    - Extremely high implied yields
+    - Negative amounts
+    - Missing asset attribution
+    
+    Args:
+        start_date: Start of period (YYYY-MM-DD)
+        end_date: End of period (YYYY-MM-DD)
+        
+    Returns:
+        List of anomalous dividend entries with details.
+    """
+    analyzer = PerformanceAnalyzer()
+    return analyzer.get_dividend_anomalies(start_date, end_date)
+
+
 if __name__ == "__main__":
     from db import init_db
     init_db()
@@ -302,3 +459,14 @@ if __name__ == "__main__":
             print(f"  {period}: {ret:.1%}")
         else:
             print(f"  {period}: N/A")
+    
+    print("\n🔍 Dividend Anomalies")
+    anomalies = analyzer.get_dividend_anomalies()
+    if anomalies:
+        for a in anomalies:
+            print(f"  ⚠️ {a['ticker'] or 'Unknown'} on {a['date']}: ${a['amount']:.2f}")
+            for issue in a['anomalies']:
+                print(f"     - {issue}")
+    else:
+        print("  No anomalies found")
+

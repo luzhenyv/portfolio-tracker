@@ -158,7 +158,7 @@ def render_overview_page():
         col_chart, col_table = st.columns([2, 1])
         
         with col_chart:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
         
         with col_table:
             # Show allocation table

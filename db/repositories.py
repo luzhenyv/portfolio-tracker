@@ -243,17 +243,20 @@ class PriceRepository:
         """
         Get price history for multiple assets (FR-5).
 
+        Uses raw close prices for NAV/returns calculation.
+        Dividends are tracked separately in the cash ledger.
+
         Returns:
-            List of dicts with [date, ticker, adjusted_close].
+            List of dicts with [date, ticker, close].
         """
         stmt = (
             select(
                 PriceDaily.date,
                 Asset.ticker,
-                PriceDaily.adjusted_close,
+                PriceDaily.close,
             )
             .join(Asset, PriceDaily.asset_id == Asset.id)
-            .where(PriceDaily.adjusted_close.is_not(None))
+            .where(PriceDaily.close.is_not(None))
         )
 
         if asset_ids:
@@ -268,7 +271,7 @@ class PriceRepository:
             {
                 "date": r.date,
                 "ticker": r.ticker,
-                "adjusted_close": r.adjusted_close,
+                "close": r.close,
             }
             for r in results
         ]
@@ -742,6 +745,148 @@ class CashRepository:
             description=description or "Cash withdrawal",
         )
     
+    def record_dividend(
+        self,
+        asset_id: int,
+        amount: float,
+        transaction_date: str,
+        description: str | None = None,
+    ) -> tuple[CashTransaction, bool]:
+        """
+        Record a dividend payment with idempotency.
+        
+        Uses deduplication strategy: asset_id + transaction_date + amount
+        to prevent duplicate dividend entries on reruns.
+        
+        Args:
+            asset_id: Asset ID for dividend attribution
+            amount: Dividend amount (positive, cash inflow)
+            transaction_date: Ex-dividend or payment date (YYYY-MM-DD)
+            description: Optional description
+            
+        Returns:
+            Tuple of (CashTransaction, created) where created=False for duplicates
+            
+        Raises:
+            ValueError: If amount is not positive
+        """
+        if amount <= 0:
+            raise ValueError("Dividend amount must be positive")
+        
+        # Check for duplicate
+        existing = self.find_dividend(asset_id, amount, transaction_date)
+        if existing:
+            return existing, False
+        
+        # Create new dividend transaction
+        transaction = CashTransaction(
+            transaction_date=transaction_date,
+            transaction_type=CashTransactionType.DIVIDEND,
+            amount=amount,  # Positive for inflow
+            asset_id=asset_id,
+            description=description or "Dividend",
+        )
+        self.session.add(transaction)
+        self.session.flush()
+        return transaction, True
+    
+    def find_dividend(
+        self,
+        asset_id: int,
+        amount: float,
+        transaction_date: str,
+    ) -> CashTransaction | None:
+        """
+        Find existing dividend matching the dedup key.
+        
+        Dedup key: asset_id + transaction_date + amount
+        
+        Args:
+            asset_id: Asset ID
+            amount: Dividend amount
+            transaction_date: Transaction date
+            
+        Returns:
+            Existing CashTransaction if found, else None
+        """
+        stmt = (
+            select(CashTransaction)
+            .where(
+                CashTransaction.asset_id == asset_id,
+                CashTransaction.transaction_date == transaction_date,
+                CashTransaction.transaction_type == CashTransactionType.DIVIDEND,
+                CashTransaction.amount == amount,
+            )
+        )
+        return self.session.scalar(stmt)
+    
+    def get_dividends(
+        self,
+        asset_id: int | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> Sequence[CashTransaction]:
+        """
+        Get dividend transactions with optional filters.
+        
+        Args:
+            asset_id: Filter by specific asset
+            start_date: Filter from this date (inclusive)
+            end_date: Filter to this date (inclusive)
+            
+        Returns:
+            Sequence of dividend CashTransaction records
+        """
+        stmt = (
+            select(CashTransaction)
+            .where(CashTransaction.transaction_type == CashTransactionType.DIVIDEND)
+        )
+        
+        if asset_id is not None:
+            stmt = stmt.where(CashTransaction.asset_id == asset_id)
+        if start_date:
+            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+        if end_date:
+            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+        
+        stmt = stmt.order_by(CashTransaction.transaction_date.desc())
+        return self.session.scalars(stmt).all()
+    
+    def get_dividend_summary_by_asset(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[int, float]:
+        """
+        Get total dividends grouped by asset.
+        
+        Args:
+            start_date: Filter from this date
+            end_date: Filter to this date
+            
+        Returns:
+            Dict mapping asset_id to total dividend amount
+        """
+        stmt = (
+            select(
+                CashTransaction.asset_id,
+                func.sum(CashTransaction.amount).label("total"),
+            )
+            .where(
+                CashTransaction.transaction_type == CashTransactionType.DIVIDEND,
+                CashTransaction.asset_id.is_not(None),
+            )
+            .group_by(CashTransaction.asset_id)
+        )
+        
+        if start_date:
+            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+        if end_date:
+            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+        
+        results = self.session.execute(stmt).all()
+        return {r.asset_id: r.total for r in results}
+
     def record_trade_cash_flow(
         self,
         trade: Trade,

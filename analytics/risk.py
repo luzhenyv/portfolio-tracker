@@ -63,8 +63,12 @@ class RiskAnalyzer:
         """
         Compute log returns from price data.
 
+        Uses raw close prices (not adjusted_close) for returns calculation.
+        Dividends are treated as explicit cashflows in the cash ledger,
+        so adjusted_close is not used for NAV-based performance.
+
         Args:
-            prices_df: DataFrame with columns [date, ticker, adjusted_close]
+            prices_df: DataFrame with columns [date, ticker, close]
 
         Returns:
             DataFrame pivoted with date index, ticker columns, log returns values.
@@ -72,7 +76,9 @@ class RiskAnalyzer:
         if prices_df.empty:
             return pd.DataFrame()
 
-        pivot = prices_df.pivot(index="date", columns="ticker", values="adjusted_close")
+        # Use 'close' for returns; fall back to 'adjusted_close' if close not present
+        price_col = "close" if "close" in prices_df.columns else "adjusted_close"
+        pivot = prices_df.pivot(index="date", columns="ticker", values=price_col)
         pivot = pivot.sort_index()
 
         # Log returns for better statistical properties

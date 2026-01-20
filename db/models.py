@@ -351,6 +351,10 @@ class CashTransaction(Base):
     Conventions:
     - Positive amount = cash inflow (DEPOSIT, SELL, SHORT, DIVIDEND, INTEREST)
     - Negative amount = cash outflow (WITHDRAW, BUY, COVER, FEE)
+    
+    Dividend Attribution:
+    - asset_id (optional) links dividends to specific securities
+    - Enables validation against holdings and per-asset income analytics
     """
     __tablename__ = "cash_transactions"
 
@@ -361,6 +365,9 @@ class CashTransaction(Base):
         nullable=False
     )
     amount: Mapped[float] = mapped_column(Float, nullable=False)  # Signed: + inflow, - outflow
+    asset_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("assets.id", ondelete="SET NULL"), nullable=True
+    )  # For DIVIDEND attribution
     trade_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("trades.id", ondelete="SET NULL"), nullable=True
     )
@@ -370,11 +377,13 @@ class CashTransaction(Base):
     )
 
     # Relationships
+    asset: Mapped[Optional["Asset"]] = relationship("Asset")
     trade: Mapped[Optional["Trade"]] = relationship("Trade")
 
     __table_args__ = (
         Index("idx_cash_transactions_date", "transaction_date"),
         Index("idx_cash_transactions_type", "transaction_type"),
+        Index("idx_cash_transactions_asset", "asset_id"),
     )
 
     def __repr__(self) -> str:
