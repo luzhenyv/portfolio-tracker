@@ -425,12 +425,10 @@ class DividendIngestor:
                 transaction_date=transaction_date,
                 transaction_type=CashTransactionType.DIVIDEND,
                 amount=amount,  # Positive for inflow
+                asset_id=asset.id,
                 description=description,
             )
             
-            # Set asset_id directly (new field)
-            tx.asset_id = asset.id
-            session.flush()
             session.commit()
             
             # Log warnings if any

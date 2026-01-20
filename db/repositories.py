@@ -442,6 +442,31 @@ class TradeRepository:
             "net_realized_pnl": (result.total_realized or 0.0) - (result.total_fees or 0.0),
         }
 
+    def list_all_chronological(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> Sequence[Trade]:
+        """
+        Get all trades in chronological order for position reconstruction.
+        
+        Args:
+            start_date: Optional start date (inclusive)
+            end_date: Optional end date (inclusive)
+            
+        Returns:
+            Trades sorted by date ASC, id ASC
+        """
+        stmt = select(Trade).options(joinedload(Trade.asset))
+        
+        if start_date:
+            stmt = stmt.where(Trade.trade_date >= start_date)
+        if end_date:
+            stmt = stmt.where(Trade.trade_date <= end_date)
+        
+        stmt = stmt.order_by(Trade.trade_date.asc(), Trade.id.asc())
+        return self.session.scalars(stmt).all()
+
 
 class PositionRepository:
     """
@@ -659,6 +684,7 @@ class CashRepository:
         transaction_type: CashTransactionType,
         amount: float,
         trade_id: int | None = None,
+        asset_id: int | None = None,
         description: str | None = None,
     ) -> CashTransaction:
         """
@@ -669,6 +695,7 @@ class CashRepository:
             transaction_type: Type of transaction
             amount: Signed amount (+ inflow, - outflow)
             trade_id: Optional reference to related trade
+            asset_id: Optional reference to related asset
             description: Optional description
             
         Returns:
@@ -679,6 +706,7 @@ class CashRepository:
             transaction_type=transaction_type,
             amount=amount,
             trade_id=trade_id,
+            asset_id=asset_id,
             description=description,
         )
         self.session.add(transaction)
@@ -935,6 +963,7 @@ class CashRepository:
             transaction_type=tx_type,
             amount=amount,
             trade_id=trade.id,
+            asset_id=trade.asset_id,
             description=desc,
         )
         transactions.append(tx)
@@ -946,6 +975,7 @@ class CashRepository:
                 transaction_type=CashTransactionType.FEE,
                 amount=-fees,  # Fees are always outflow
                 trade_id=trade.id,
+                asset_id=trade.asset_id,
                 description=f"Trading fee for {ticker}",
             )
             transactions.append(fee_tx)
@@ -1119,4 +1149,85 @@ class CashRepository:
             ledger = ledger[-limit:]
         
         return ledger
+
+    def get_daily_balances(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, float]:
+        """
+        Get end-of-day cash balance for each date with transactions.
+        
+        For NAV calculation, forward-fill these balances to cover
+        days without transactions.
+        
+        Args:
+            start_date: Optional start date (inclusive)
+            end_date: Optional end date (inclusive)
+            
+        Returns:
+            Dict mapping date string to EOD cash balance
+        """
+        # Get starting balance before the period
+        starting_balance = 0.0
+        if start_date:
+            stmt = select(func.sum(CashTransaction.amount)).where(
+                CashTransaction.transaction_date < start_date
+            )
+            starting_balance = self.session.scalar(stmt) or 0.0
+        
+        # Get daily net cash flows
+        stmt = (
+            select(
+                CashTransaction.transaction_date,
+                func.sum(CashTransaction.amount).label("daily_flow"),
+            )
+            .group_by(CashTransaction.transaction_date)
+            .order_by(CashTransaction.transaction_date)
+        )
+        
+        if start_date:
+            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+        if end_date:
+            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+        
+        results = self.session.execute(stmt).all()
+        
+        # Build cumulative balance by date
+        balances = {}
+        running = starting_balance
+        
+        for r in results:
+            running += r.daily_flow
+            balances[r.transaction_date] = running
+        
+        return balances
+
+    def list_all_chronological(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> Sequence[CashTransaction]:
+        """
+        Get all cash transactions in chronological order.
+        
+        Args:
+            start_date: Optional start date (inclusive)
+            end_date: Optional end date (inclusive)
+            
+        Returns:
+            CashTransactions sorted by date ASC, id ASC
+        """
+        stmt = select(CashTransaction)
+        
+        if start_date:
+            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+        if end_date:
+            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+        
+        stmt = stmt.order_by(
+            CashTransaction.transaction_date.asc(),
+            CashTransaction.id.asc(),
+        )
+        return self.session.scalars(stmt).all()
 
