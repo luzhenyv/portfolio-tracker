@@ -15,10 +15,14 @@ Usage:
     python main.py add-asset NFLX
 
     # Trading operations
-    python main.py buy TSLA --shares 100 --price 150.00 --date 2024-01-15
-    python main.py sell TSLA --shares 50 --price 170.00 --date 2024-06-15
-    python main.py buy NVDA --shares 50 --price 123.00 --date 2024-01-15
-    python main.py buy KO --shares 50 --price 64.30 --date 2024-01-15
+    python main.py buy TSLA --shares 100 --price 150.00 --date 2025-01-15
+    python main.py sell TSLA --shares 50 --price 170.00 --date 2025-06-15
+    python main.py buy NVDA --shares 50 --price 123.00 --date 2025-09-15
+    python main.py buy KO --shares 50 --price 64.30 --date 2025-10-23
+
+    # Cash operations
+    python main.py deposit 100000 --description "Initial capital" --date 2025-01-01
+    python main.py withdraw 500 --description "Personal expense" --date 2025-12-25
 
     # Selling more than you own creates a short position
     python main.py sell TSLA --shares 120 --price 180.00  # Goes short 20 shares
