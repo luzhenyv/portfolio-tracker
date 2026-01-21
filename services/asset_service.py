@@ -275,3 +275,11 @@ def print_asset_creation_result(result: AssetCreationResult) -> None:
         if result.asset.exchange:
             print(f"   Exchange: {result.asset.exchange}")
 
+
+def get_all_tickers() -> list[str]:
+    """Get sorted list of all existing tickers."""
+    db = get_db()
+    with db.session() as session:
+        asset_repo = AssetRepository(session)
+        return sorted([a.ticker for a in asset_repo.get_all()])
+

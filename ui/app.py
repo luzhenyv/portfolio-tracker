@@ -14,15 +14,16 @@ import time
 from datetime import datetime, date
 
 from config import config
-from db import init_db, get_db, AssetStatus
-from db.repositories import CashRepository, AssetRepository, TradeRepository
+from db import init_db, AssetStatus
 from analytics.portfolio import compute_portfolio
 from analytics.risk import compute_risk_metrics
 from analytics.valuation import run_valuation
 from analytics.performance import get_nav_period_returns, get_nav_series
 from decision.engine import decision_engine
 from services.position_service import buy_position, sell_position
-from services.asset_service import create_asset_with_data
+from services.asset_service import create_asset_with_data, get_all_tickers
+from services.cash_service import get_cash_balance, deposit_cash, withdraw_cash, get_cash_ledger
+from services.trade_service import get_recent_trades
 
 
 # Initialize database on app start
@@ -144,10 +145,7 @@ def render_overview_page():
     st.subheader("📊 Asset Allocation")
 
     # Get cash balance
-    db = get_db()
-    with db.session() as session:
-        cash_repo = CashRepository(session)
-        cash_balance = cash_repo.get_balance()
+    cash_balance = get_cash_balance()
 
     # Build allocation data: Cash + each stock's market value
     allocation_data = []
@@ -421,10 +419,7 @@ def render_positions_page():
 
 def get_current_cash_balance() -> float:
     """Get current cash balance."""
-    db = get_db()
-    with db.session() as session:
-        cash_repo = CashRepository(session)
-        return cash_repo.get_balance()
+    return get_cash_balance()
 
 
 def render_admin_page():
@@ -443,10 +438,7 @@ def render_admin_page():
     cash_balance = get_current_cash_balance()
 
     # Get existing tickers for selectbox
-    db = get_db()
-    with db.session() as session:
-        asset_repo = AssetRepository(session)
-        existing_tickers = sorted([a.ticker for a in asset_repo.get_all()])
+    existing_tickers = get_all_tickers()
 
     # Display current cash prominently
     col1, col2 = st.columns([1, 3])
@@ -669,14 +661,11 @@ def render_admin_page():
             if cash_submitted:
                 if cash_action == "DEPOSIT":
                     # Execute deposit
-                    db = get_db()
-                    with db.session() as session:
-                        cash_repo = CashRepository(session)
-                        tx = cash_repo.deposit(
-                            amount=amount,
-                            transaction_date=str(cash_date),
-                            description=description or None,
-                        )
+                    tx = deposit_cash(
+                        amount=amount,
+                        transaction_date=str(cash_date),
+                        description=description or None,
+                    )
 
                     new_balance = get_current_cash_balance()
                     st.success(
@@ -698,14 +687,11 @@ def render_admin_page():
                         )
                     else:
                         # Execute withdrawal
-                        db = get_db()
-                        with db.session() as session:
-                            cash_repo = CashRepository(session)
-                            tx = cash_repo.withdraw(
-                                amount=amount,
-                                transaction_date=str(cash_date),
-                                description=description or None,
-                            )
+                        tx = withdraw_cash(
+                            amount=amount,
+                            transaction_date=str(cash_date),
+                            description=description or None,
+                        )
 
                         new_balance = get_current_cash_balance()
                         st.success(
@@ -721,10 +707,7 @@ def render_admin_page():
 
     with activity_tabs[0]:
         # Show recent trades
-        db = get_db()
-        with db.session() as session:
-            trade_repo = TradeRepository(session)
-            recent_trades = trade_repo.get_all_trades(limit=10)
+        recent_trades = get_recent_trades(limit=10)
 
         if recent_trades:
             trade_data = []
@@ -752,10 +735,7 @@ def render_admin_page():
 
     with activity_tabs[1]:
         # Show cash ledger
-        db = get_db()
-        with db.session() as session:
-            cash_repo = CashRepository(session)
-            ledger = cash_repo.get_ledger(limit=10)
+        ledger = get_cash_ledger(limit=10)
 
         if ledger:
             ledger_data = []
