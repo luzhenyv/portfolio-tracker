@@ -423,6 +423,12 @@ def render_admin_page():
     # Get current cash balance
     cash_balance = get_current_cash_balance()
     
+    # Get existing tickers for selectbox
+    db = get_db()
+    with db.session() as session:
+        asset_repo = AssetRepository(session)
+        existing_tickers = sorted([a.ticker for a in asset_repo.get_all()])
+    
     # Display current cash prominently
     col1, col2 = st.columns([1, 3])
     with col1:
@@ -438,11 +444,15 @@ def render_admin_page():
         st.subheader("📈 Trade Ticket")
         
         with st.form("trade_form", clear_on_submit=True):
-            ticker = st.text_input(
+            ticker_selection = st.selectbox(
                 "Ticker Symbol *",
-                placeholder="AAPL",
+                options=existing_tickers,
+                index=None,
+                placeholder="Select or enter ticker (e.g. AAPL)",
                 help="Stock ticker symbol (e.g., AAPL, TSLA, NVDA)",
-            ).upper().strip()
+                accept_new_options=True,
+            )
+            ticker = ticker_selection.upper().strip() if ticker_selection else ""
             
             action = st.radio(
                 "Action *",
@@ -562,10 +572,14 @@ def render_admin_page():
         with st.expander("➕ Add New Asset to Track"):
             st.caption("Add a ticker before trading if it doesn't exist")
             with st.form("add_asset_form", clear_on_submit=True):
-                new_ticker = st.text_input(
+                new_ticker_selection = st.selectbox(
                     "Ticker Symbol",
-                    placeholder="MSFT",
-                ).upper().strip()
+                    options=existing_tickers,
+                    index=None,
+                    placeholder="Enter new ticker (e.g. MSFT)",
+                    accept_new_options=True,
+                )
+                new_ticker = new_ticker_selection.upper().strip() if new_ticker_selection else ""
                 
                 asset_status = st.selectbox(
                     "Status",
