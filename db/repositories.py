@@ -1107,6 +1107,7 @@ class CashRepository:
         start_date: str | None = None,
         end_date: str | None = None,
         limit: int | None = None,
+        sort_desc: bool = True,
     ) -> list[dict]:
         """
         Get cash ledger with running balance.
@@ -1128,7 +1129,14 @@ class CashRepository:
         if end_date:
             stmt = stmt.where(CashTransaction.transaction_date <= end_date)
         
-        stmt = stmt.order_by(CashTransaction.transaction_date, CashTransaction.id)
+        if sort_desc:
+            stmt = stmt.order_by(
+                CashTransaction.transaction_date.desc(),
+            )
+        else:
+            stmt = stmt.order_by(
+                CashTransaction.transaction_date.asc(),
+            )
         
         transactions = self.session.scalars(stmt).all()
         
