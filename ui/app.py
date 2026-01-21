@@ -24,6 +24,19 @@ from services.position_service import buy_position, sell_position
 from services.asset_service import create_asset_with_data, get_all_tickers
 from services.cash_service import get_cash_balance, deposit_cash, withdraw_cash, get_cash_ledger
 from services.trade_service import get_recent_trades
+from services.note_service import (
+    create_note_for_asset,
+    create_market_note,
+    create_journal_entry,
+    get_recent_notes,
+    get_notes_for_asset,
+    get_market_symbols,
+    update_note,
+    archive_note,
+    pin_note,
+    NoteResult,
+)
+from db.models import NoteType, NoteTargetKind
 
 
 # Initialize database on app start
@@ -46,7 +59,7 @@ def render_sidebar() -> str:
     st.sidebar.markdown("---")
 
     # Build page list based on config
-    pages = ["Overview", "Positions", "Watchlist"]
+    pages = ["Overview", "Positions", "Watchlist", "Notes"]
     if config.ui.enable_admin_ui:
         pages.append("Admin")
 
@@ -858,6 +871,334 @@ def render_watchlist_page():
     )
 
 
+def render_notes_page():
+    """
+    Render Notes page for investment journal and research notes.
+    
+    Shows:
+    - Recent notes across all targets
+    - Filter by target type (Asset, Market, Journal)
+    - Create new notes (when admin UI enabled)
+    - View/edit existing notes
+    """
+    st.header("📝 Investment Notes")
+    
+    # Get existing tickers and market symbols for filters
+    existing_tickers = get_all_tickers()
+    market_symbols = get_market_symbols()
+    
+    # Tabs: Recent | By Asset | By Market | Create
+    if config.ui.enable_admin_ui:
+        tabs = st.tabs(["Recent Notes", "By Asset", "By Market", "Create Note"])
+    else:
+        tabs = st.tabs(["Recent Notes", "By Asset", "By Market"])
+    
+    # --- RECENT NOTES TAB ---
+    with tabs[0]:
+        st.subheader("🕐 Recent Notes")
+        
+        recent_notes = get_recent_notes(limit=20)
+        
+        if recent_notes:
+            for note in recent_notes:
+                _render_note_card(note, show_target=True)
+        else:
+            st.info("No notes yet. Create your first note to get started!")
+    
+    # --- BY ASSET TAB ---
+    with tabs[1]:
+        st.subheader("📈 Notes by Asset")
+        
+        if existing_tickers:
+            selected_ticker = st.selectbox(
+                "Select Asset",
+                options=existing_tickers,
+                index=None,
+                placeholder="Choose a ticker...",
+                key="notes_asset_filter",
+            )
+            
+            if selected_ticker:
+                asset_notes = get_notes_for_asset(selected_ticker)
+                
+                if asset_notes:
+                    for note in asset_notes:
+                        _render_note_card(note)
+                else:
+                    st.info(f"No notes for {selected_ticker} yet.")
+        else:
+            st.info("No assets in portfolio. Add assets first.")
+    
+    # --- BY MARKET TAB ---
+    with tabs[2]:
+        st.subheader("🌍 Market Notes")
+        
+        # Common market symbols
+        common_markets = [
+            {"symbol": "^GSPC", "name": "S&P 500"},
+            {"symbol": "^DJI", "name": "Dow Jones"},
+            {"symbol": "^IXIC", "name": "NASDAQ"},
+            {"symbol": "^VIX", "name": "VIX"},
+            {"symbol": "^TNX", "name": "10Y Treasury"},
+        ]
+        
+        # Combine with existing market symbols
+        all_markets = {m["symbol"]: m["name"] for m in common_markets}
+        for m in market_symbols:
+            all_markets[m["symbol"]] = m["name"]
+        
+        market_options = [f"{sym} ({name})" for sym, name in all_markets.items()]
+        
+        selected_market = st.selectbox(
+            "Select Market/Index",
+            options=market_options,
+            index=None,
+            placeholder="Choose a market symbol...",
+            key="notes_market_filter",
+        )
+        
+        if selected_market:
+            # Extract symbol from selection
+            symbol = selected_market.split(" (")[0]
+            
+            # Get notes for this market symbol
+            from db import get_db
+            from db.repositories import NoteRepository, NoteTargetRepository
+            
+            db = get_db()
+            with db.session() as session:
+                target_repo = NoteTargetRepository(session)
+                note_repo = NoteRepository(session)
+                
+                # Find target for this symbol
+                from db.models import NoteTargetKind
+                from sqlalchemy import select
+                from db.models import NoteTarget
+                
+                stmt = select(NoteTarget).where(
+                    NoteTarget.kind == NoteTargetKind.MARKET,
+                    NoteTarget.symbol == symbol,
+                )
+                target = session.scalar(stmt)
+                
+                if target:
+                    market_notes = note_repo.list_by_target(target.id)
+                    if market_notes:
+                        for note in market_notes:
+                            _render_note_card(note)
+                    else:
+                        st.info(f"No notes for {symbol} yet.")
+                else:
+                    st.info(f"No notes for {symbol} yet.")
+    
+    # --- CREATE NOTE TAB (Admin only) ---
+    if config.ui.enable_admin_ui and len(tabs) > 3:
+        with tabs[3]:
+            st.subheader("✏️ Create New Note")
+            
+            with st.form("create_note_form", clear_on_submit=True):
+                # Target selection
+                target_type = st.radio(
+                    "Note Target",
+                    ["Asset", "Market/Index", "Journal"],
+                    horizontal=True,
+                )
+                
+                # Target-specific fields
+                target_ticker = None
+                target_symbol = None
+                target_symbol_name = None
+                
+                if target_type == "Asset":
+                    target_ticker = st.selectbox(
+                        "Select Asset",
+                        options=existing_tickers,
+                        index=None,
+                        placeholder="Choose a ticker...",
+                        accept_new_options=True,
+                    )
+                elif target_type == "Market/Index":
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        target_symbol = st.text_input(
+                            "Symbol",
+                            placeholder="^GSPC, ^VIX, etc.",
+                        )
+                    with col2:
+                        target_symbol_name = st.text_input(
+                            "Display Name (optional)",
+                            placeholder="S&P 500, VIX, etc.",
+                        )
+                
+                # Note type
+                note_type_options = [t.value for t in NoteType]
+                selected_type = st.selectbox(
+                    "Note Type",
+                    options=note_type_options,
+                    index=note_type_options.index("JOURNAL"),
+                )
+                
+                # Note content
+                title = st.text_input(
+                    "Title (optional)",
+                    placeholder="Brief title for the note",
+                )
+                
+                summary = st.text_area(
+                    "Summary (optional)",
+                    placeholder="Brief summary for table display (max 500 chars)",
+                    max_chars=500,
+                    height=80,
+                )
+                
+                key_points = st.text_area(
+                    "Key Points (optional)",
+                    placeholder="Key takeaways, one per line",
+                    height=80,
+                )
+                
+                body_md = st.text_area(
+                    "Note Content *",
+                    placeholder="Full note content in Markdown...",
+                    height=200,
+                )
+                
+                tags = st.text_input(
+                    "Tags (optional)",
+                    placeholder="Comma-separated: bullish, earnings, risk",
+                )
+                
+                submitted = st.form_submit_button("Create Note", type="primary")
+                
+                if submitted:
+                    if not body_md.strip():
+                        st.error("Note content is required")
+                    else:
+                        note_type = NoteType(selected_type)
+                        
+                        if target_type == "Asset":
+                            if not target_ticker:
+                                st.error("Please select an asset")
+                            else:
+                                result = create_note_for_asset(
+                                    ticker=target_ticker.upper().strip(),
+                                    body_md=body_md,
+                                    note_type=note_type,
+                                    title=title or None,
+                                    summary=summary or None,
+                                    key_points=key_points or None,
+                                    tags=tags or None,
+                                )
+                                if result.success:
+                                    st.success(result.status_message)
+                                    celebrate_and_rerun("Saving note...", delay=1, animation=None)
+                                else:
+                                    st.error(result.status_message)
+                        
+                        elif target_type == "Market/Index":
+                            if not target_symbol:
+                                st.error("Please enter a market symbol")
+                            else:
+                                result = create_market_note(
+                                    symbol=target_symbol.upper().strip(),
+                                    body_md=body_md,
+                                    name=target_symbol_name or None,
+                                    note_type=note_type,
+                                    title=title or None,
+                                    summary=summary or None,
+                                    key_points=key_points or None,
+                                    tags=tags or None,
+                                )
+                                if result.success:
+                                    st.success(result.status_message)
+                                    celebrate_and_rerun("Saving note...", delay=1, animation=None)
+                                else:
+                                    st.error(result.status_message)
+                        
+                        else:  # Journal
+                            result = create_journal_entry(
+                                body_md=body_md,
+                                note_type=note_type,
+                                title=title or None,
+                                summary=summary or None,
+                                key_points=key_points or None,
+                                tags=tags or None,
+                            )
+                            if result.success:
+                                st.success(result.status_message)
+                                celebrate_and_rerun("Saving note...", delay=1, animation=None)
+                            else:
+                                st.error(result.status_message)
+
+
+def _render_note_card(note, show_target: bool = False):
+    """Render a single note as an expandable card."""
+    # Build header
+    type_emoji = {
+        NoteType.JOURNAL: "📓",
+        NoteType.THESIS: "💡",
+        NoteType.RISK: "⚠️",
+        NoteType.TRADE_PLAN: "📋",
+        NoteType.TRADE_REVIEW: "🔍",
+        NoteType.MARKET_VIEW: "🌍",
+        NoteType.EARNINGS: "📊",
+        NoteType.NEWS: "📰",
+        NoteType.OTHER: "📝",
+    }.get(note.note_type, "📝")
+    
+    # Format date
+    created_str = note.created_at.strftime("%Y-%m-%d %H:%M") if note.created_at else ""
+    
+    # Build title
+    display_title = note.title or note.summary or f"{note.note_type.value} Note"
+    if note.pinned:
+        display_title = f"📌 {display_title}"
+    
+    # Target info
+    target_info = ""
+    if show_target and note.target:
+        if note.target.kind == NoteTargetKind.ASSET and note.target.asset:
+            target_info = f" • {note.target.asset.ticker}"
+        elif note.target.kind == NoteTargetKind.MARKET:
+            target_info = f" • {note.target.symbol_name or note.target.symbol}"
+        elif note.target.kind == NoteTargetKind.TRADE:
+            target_info = f" • Trade #{note.target.trade_id}"
+    
+    with st.expander(f"{type_emoji} {display_title}{target_info} — {created_str}"):
+        # Summary and key points
+        if note.summary:
+            st.caption(note.summary)
+        
+        if note.key_points:
+            st.markdown("**Key Points:**")
+            for point in note.key_points.split("\n"):
+                if point.strip():
+                    st.markdown(f"• {point.strip()}")
+        
+        st.divider()
+        
+        # Full content
+        st.markdown(note.body_md)
+        
+        # Tags
+        if note.tags:
+            st.markdown("---")
+            tag_list = [t.strip() for t in note.tags.split(",") if t.strip()]
+            st.caption("Tags: " + " • ".join(f"`{tag}`" for tag in tag_list))
+        
+        # Actions (admin only)
+        if config.ui.enable_admin_ui:
+            col1, col2, col3 = st.columns([1, 1, 4])
+            with col1:
+                if st.button("📌 Pin" if not note.pinned else "📌 Unpin", key=f"pin_{note.id}"):
+                    pin_note(note.id, not note.pinned)
+                    st.rerun()
+            with col2:
+                if st.button("🗑️ Archive", key=f"archive_{note.id}"):
+                    archive_note(note.id)
+                    st.rerun()
+
+
 def main():
     """Main application entry point."""
     configure_page()
@@ -872,6 +1213,8 @@ def main():
         render_positions_page()
     elif page == "Watchlist":
         render_watchlist_page()
+    elif page == "Notes":
+        render_notes_page()
     elif page == "Admin":
         render_admin_page()
 

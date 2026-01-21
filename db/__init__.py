@@ -14,6 +14,10 @@ from db.models import (
     ConfidenceLevel,
     FundamentalQuarterly,
     InvestmentThesis,
+    Note,
+    NoteTarget,
+    NoteTargetKind,
+    NoteType,
     Position,  # Current position state (formerly PositionState)
     PriceDaily,
     Trade,  # Transaction history
@@ -37,6 +41,10 @@ __all__ = [
     "ConfidenceLevel",
     "FundamentalQuarterly",
     "InvestmentThesis",
+    "Note",
+    "NoteTarget",
+    "NoteTargetKind",
+    "NoteType",
     "Position",  # Current position state
     "PriceDaily",
     "Trade",  # Transaction ledger

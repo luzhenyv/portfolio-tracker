@@ -16,6 +16,10 @@ from db.models import (
     AssetStatus,
     CashTransaction,
     CashTransactionType,
+    Note,
+    NoteTarget,
+    NoteTargetKind,
+    NoteType,
     Position,
     PriceDaily,
     Trade,
@@ -1240,4 +1244,319 @@ class CashRepository:
             CashTransaction.id.asc(),
         )
         return self.session.scalars(stmt).all()
+
+
+class NoteTargetRepository:
+    """Repository for NoteTarget operations."""
+    
+    def __init__(self, session: Session):
+        self.session = session
+    
+    def get_by_id(self, target_id: int) -> NoteTarget | None:
+        """Get target by ID."""
+        return self.session.get(NoteTarget, target_id)
+    
+    def get_or_create_asset_target(self, asset_id: int) -> NoteTarget:
+        """Get or create a target for an asset."""
+        stmt = select(NoteTarget).where(
+            NoteTarget.kind == NoteTargetKind.ASSET,
+            NoteTarget.asset_id == asset_id,
+        )
+        target = self.session.scalar(stmt)
+        if target:
+            return target
+        
+        target = NoteTarget(kind=NoteTargetKind.ASSET, asset_id=asset_id)
+        self.session.add(target)
+        self.session.flush()
+        return target
+    
+    def get_or_create_trade_target(self, trade_id: int) -> NoteTarget:
+        """Get or create a target for a trade."""
+        stmt = select(NoteTarget).where(
+            NoteTarget.kind == NoteTargetKind.TRADE,
+            NoteTarget.trade_id == trade_id,
+        )
+        target = self.session.scalar(stmt)
+        if target:
+            return target
+        
+        target = NoteTarget(kind=NoteTargetKind.TRADE, trade_id=trade_id)
+        self.session.add(target)
+        self.session.flush()
+        return target
+    
+    def get_or_create_market_target(
+        self, symbol: str, name: str | None = None
+    ) -> NoteTarget:
+        """Get or create a target for a market/index symbol."""
+        symbol = symbol.upper()
+        stmt = select(NoteTarget).where(
+            NoteTarget.kind == NoteTargetKind.MARKET,
+            NoteTarget.symbol == symbol,
+        )
+        target = self.session.scalar(stmt)
+        if target:
+            # Update name if provided
+            if name and not target.symbol_name:
+                target.symbol_name = name
+                self.session.flush()
+            return target
+        
+        target = NoteTarget(
+            kind=NoteTargetKind.MARKET,
+            symbol=symbol,
+            symbol_name=name,
+        )
+        self.session.add(target)
+        self.session.flush()
+        return target
+    
+    def get_or_create_journal_target(self) -> NoteTarget:
+        """Get or create a journal target (singleton for general entries)."""
+        stmt = select(NoteTarget).where(NoteTarget.kind == NoteTargetKind.JOURNAL)
+        target = self.session.scalar(stmt)
+        if target:
+            return target
+        
+        target = NoteTarget(kind=NoteTargetKind.JOURNAL)
+        self.session.add(target)
+        self.session.flush()
+        return target
+    
+    def get_asset_target(self, asset_id: int) -> NoteTarget | None:
+        """Get target for an asset if exists."""
+        stmt = select(NoteTarget).where(
+            NoteTarget.kind == NoteTargetKind.ASSET,
+            NoteTarget.asset_id == asset_id,
+        )
+        return self.session.scalar(stmt)
+    
+    def list_market_targets(self) -> Sequence[NoteTarget]:
+        """List all market targets."""
+        stmt = (
+            select(NoteTarget)
+            .where(NoteTarget.kind == NoteTargetKind.MARKET)
+            .order_by(NoteTarget.symbol)
+        )
+        return self.session.scalars(stmt).all()
+
+
+class NoteRepository:
+    """Repository for Note operations."""
+    
+    def __init__(self, session: Session):
+        self.session = session
+    
+    def get_by_id(self, note_id: int) -> Note | None:
+        """Get note by ID."""
+        return self.session.get(Note, note_id)
+    
+    def create(
+        self,
+        target_id: int,
+        body_md: str,
+        note_type: NoteType = NoteType.JOURNAL,
+        title: str | None = None,
+        summary: str | None = None,
+        key_points: str | None = None,
+        tags: str | None = None,
+    ) -> Note:
+        """Create a new note."""
+        note = Note(
+            target_id=target_id,
+            note_type=note_type,
+            title=title,
+            summary=summary,
+            key_points=key_points,
+            body_md=body_md,
+            tags=tags,
+        )
+        self.session.add(note)
+        self.session.flush()
+        return note
+    
+    def update(
+        self,
+        note_id: int,
+        body_md: str | None = None,
+        title: str | None = None,
+        summary: str | None = None,
+        key_points: str | None = None,
+        tags: str | None = None,
+        note_type: NoteType | None = None,
+    ) -> Note | None:
+        """Update an existing note."""
+        note = self.get_by_id(note_id)
+        if not note:
+            return None
+        
+        if body_md is not None:
+            note.body_md = body_md
+        if title is not None:
+            note.title = title
+        if summary is not None:
+            note.summary = summary
+        if key_points is not None:
+            note.key_points = key_points
+        if tags is not None:
+            note.tags = tags
+        if note_type is not None:
+            note.note_type = note_type
+        
+        self.session.flush()
+        return note
+    
+    def list_by_target(
+        self,
+        target_id: int,
+        include_archived: bool = False,
+        limit: int | None = None,
+    ) -> Sequence[Note]:
+        """List notes for a target, ordered by pinned then created_at desc."""
+        stmt = (
+            select(Note)
+            .options(joinedload(Note.target).joinedload(NoteTarget.asset))
+            .where(Note.target_id == target_id)
+        )
+        
+        if not include_archived:
+            stmt = stmt.where(Note.status == "ACTIVE")
+        
+        # Pinned first, then by created_at desc
+        stmt = stmt.order_by(Note.pinned.desc(), Note.created_at.desc())
+        
+        if limit:
+            stmt = stmt.limit(limit)
+        
+        return self.session.scalars(stmt).all()
+    
+    def list_by_asset(
+        self,
+        asset_id: int,
+        include_archived: bool = False,
+        limit: int | None = None,
+    ) -> Sequence[Note]:
+        """List notes for an asset (via target)."""
+        stmt = (
+            select(Note)
+            .options(joinedload(Note.target).joinedload(NoteTarget.asset))
+            .join(NoteTarget)
+            .where(
+                NoteTarget.kind == NoteTargetKind.ASSET,
+                NoteTarget.asset_id == asset_id,
+            )
+        )
+        
+        if not include_archived:
+            stmt = stmt.where(Note.status == "ACTIVE")
+        
+        stmt = stmt.order_by(Note.pinned.desc(), Note.created_at.desc())
+        
+        if limit:
+            stmt = stmt.limit(limit)
+        
+        return self.session.scalars(stmt).all()
+    
+    def list_by_type(
+        self,
+        note_type: NoteType,
+        include_archived: bool = False,
+        limit: int | None = None,
+    ) -> Sequence[Note]:
+        """List notes by type."""
+        stmt = (
+            select(Note)
+            .options(joinedload(Note.target).joinedload(NoteTarget.asset))
+            .where(Note.note_type == note_type)
+        )
+        
+        if not include_archived:
+            stmt = stmt.where(Note.status == "ACTIVE")
+        
+        stmt = stmt.order_by(Note.pinned.desc(), Note.created_at.desc())
+        
+        if limit:
+            stmt = stmt.limit(limit)
+        
+        return self.session.scalars(stmt).all()
+    
+    def list_recent(
+        self,
+        limit: int = 20,
+        include_archived: bool = False,
+    ) -> Sequence[Note]:
+        """List recent notes across all targets."""
+        stmt = (
+            select(Note)
+            .options(joinedload(Note.target).joinedload(NoteTarget.asset))
+        )
+        
+        if not include_archived:
+            stmt = stmt.where(Note.status == "ACTIVE")
+        
+        stmt = stmt.order_by(Note.created_at.desc()).limit(limit)
+        
+        return self.session.scalars(stmt).all()
+    
+    def search_by_tag(
+        self,
+        tag: str,
+        include_archived: bool = False,
+        limit: int | None = None,
+    ) -> Sequence[Note]:
+        """Search notes containing a tag."""
+        # SQLite LIKE for comma-separated tags
+        pattern = f"%{tag}%"
+        stmt = (
+            select(Note)
+            .options(joinedload(Note.target).joinedload(NoteTarget.asset))
+            .where(Note.tags.like(pattern))
+        )
+        
+        if not include_archived:
+            stmt = stmt.where(Note.status == "ACTIVE")
+        
+        stmt = stmt.order_by(Note.created_at.desc())
+        
+        if limit:
+            stmt = stmt.limit(limit)
+        
+        return self.session.scalars(stmt).all()
+    
+    def set_status(self, note_id: int, status: str) -> Note | None:
+        """Set note status (ACTIVE, ARCHIVED, DELETED)."""
+        note = self.get_by_id(note_id)
+        if not note:
+            return None
+        note.status = status
+        self.session.flush()
+        return note
+    
+    def set_pinned(self, note_id: int, pinned: bool) -> Note | None:
+        """Set pinned status."""
+        note = self.get_by_id(note_id)
+        if not note:
+            return None
+        note.pinned = pinned
+        self.session.flush()
+        return note
+    
+    def delete(self, note_id: int) -> bool:
+        """Soft delete a note."""
+        note = self.get_by_id(note_id)
+        if not note:
+            return False
+        note.status = "DELETED"
+        self.session.flush()
+        return True
+    
+    def hard_delete(self, note_id: int) -> bool:
+        """Permanently delete a note."""
+        note = self.get_by_id(note_id)
+        if not note:
+            return False
+        self.session.delete(note)
+        self.session.flush()
+        return True
 

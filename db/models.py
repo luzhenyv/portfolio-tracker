@@ -339,6 +339,34 @@ class CashTransactionType(str, Enum):
     INTEREST = "INTEREST"    # Interest earned/paid
 
 
+class NoteTargetKind(str, Enum):
+    """Kind of entity a note is attached to."""
+    ASSET = "ASSET"          # Note about a specific stock/ETF
+    TRADE = "TRADE"          # Note about a specific trade
+    MARKET = "MARKET"        # Note about market/index (e.g., S&P 500, ^GSPC)
+    JOURNAL = "JOURNAL"      # General journal entry (not attached to anything)
+
+
+class NoteType(str, Enum):
+    """Type/category of note content."""
+    JOURNAL = "JOURNAL"          # General journal entry
+    THESIS = "THESIS"            # Investment thesis
+    RISK = "RISK"                # Risk analysis
+    TRADE_PLAN = "TRADE_PLAN"    # Plan for a trade (e.g., "buy 10 TSLA at 416")
+    TRADE_REVIEW = "TRADE_REVIEW"  # Post-trade review/postmortem
+    MARKET_VIEW = "MARKET_VIEW"  # Market outlook/analysis
+    EARNINGS = "EARNINGS"        # Earnings analysis
+    NEWS = "NEWS"                # News summary/reaction
+    OTHER = "OTHER"              # Miscellaneous
+
+
+class NoteStatus(str, Enum):
+    """Status of a note."""
+    ACTIVE = "ACTIVE"
+    ARCHIVED = "ARCHIVED"
+    DELETED = "DELETED"
+
+
 class CashTransaction(Base):
     """
     Cash transaction ledger for tracking cash position changes.
@@ -388,3 +416,123 @@ class CashTransaction(Base):
 
     def __repr__(self) -> str:
         return f"<CashTransaction(id={self.id}, type={self.transaction_type}, amount={self.amount})>"
+
+
+class NoteTarget(Base):
+    """
+    Target entity for notes - what the note is attached to.
+    
+    Normalizes note attachment so notes can reference:
+    - A specific asset (stock/ETF)
+    - A specific trade
+    - A market/index symbol (e.g., ^GSPC for S&P 500)
+    - Nothing (journal entry)
+    """
+    __tablename__ = "note_targets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[NoteTargetKind] = mapped_column(
+        SQLEnum(NoteTargetKind, native_enum=False, length=20),
+        nullable=False
+    )
+    asset_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=True
+    )
+    trade_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("trades.id", ondelete="CASCADE"), nullable=True
+    )
+    symbol: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # For MARKET targets
+    symbol_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)  # Display name
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now(timezone.utc), nullable=False
+    )
+
+    # Relationships
+    asset: Mapped[Optional["Asset"]] = relationship("Asset")
+    trade: Mapped[Optional["Trade"]] = relationship("Trade")
+    notes: Mapped[list["Note"]] = relationship(
+        "Note", back_populates="target", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index("idx_note_targets_kind", "kind"),
+        Index("idx_note_targets_asset", "asset_id"),
+        Index("idx_note_targets_trade", "trade_id"),
+        Index("idx_note_targets_symbol", "symbol"),
+    )
+
+    def __repr__(self) -> str:
+        if self.kind == NoteTargetKind.ASSET:
+            return f"<NoteTarget(id={self.id}, kind=ASSET, asset_id={self.asset_id})>"
+        elif self.kind == NoteTargetKind.TRADE:
+            return f"<NoteTarget(id={self.id}, kind=TRADE, trade_id={self.trade_id})>"
+        elif self.kind == NoteTargetKind.MARKET:
+            return f"<NoteTarget(id={self.id}, kind=MARKET, symbol={self.symbol})>"
+        return f"<NoteTarget(id={self.id}, kind=JOURNAL)>"
+
+
+class Note(Base):
+    """
+    Investment note/journal entry.
+    
+    Notes can be attached to assets, trades, market symbols, or be general journal entries.
+    Designed to coexist with InvestmentThesis - thesis is structured, notes are freeform.
+    
+    Fields:
+        title: Optional short title for the note
+        note_type: Category (THESIS, RISK, TRADE_PLAN, MARKET_VIEW, etc.)
+        summary: Brief summary for table/list display (can be LLM-generated later)
+        key_points: Comma or newline-separated key points for quick reference
+        body_md: Full note content in Markdown
+        tags: Comma-separated tags for filtering (e.g., "bullish,earnings,AAPL")
+        pinned: Pin important notes to top of lists
+        status: ACTIVE, ARCHIVED, DELETED (soft delete)
+    """
+    __tablename__ = "notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    target_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("note_targets.id", ondelete="CASCADE"), nullable=False
+    )
+    note_type: Mapped[NoteType] = mapped_column(
+        SQLEnum(NoteType, native_enum=False, length=20),
+        nullable=False,
+        default=NoteType.JOURNAL
+    )
+    title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # For table display
+    key_points: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Key takeaways
+    body_md: Mapped[str] = mapped_column(Text, nullable=False)  # Full content in Markdown
+    tags: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Comma-separated
+    pinned: Mapped[bool] = mapped_column(Integer, nullable=False, default=False)
+    status: Mapped[NoteStatus] = mapped_column(
+        SQLEnum(NoteStatus, native_enum=False, length=20),
+        nullable=False,
+        default=NoteStatus.ACTIVE
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now(timezone.utc), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc)
+    )
+
+    # Relationships
+    target: Mapped["NoteTarget"] = relationship("NoteTarget", back_populates="notes")
+
+    __table_args__ = (
+        Index("idx_notes_target", "target_id"),
+        Index("idx_notes_type", "note_type"),
+        Index("idx_notes_status", "status"),
+        Index("idx_notes_created", "created_at"),
+    )
+
+    @property
+    def tags_list(self) -> list[str]:
+        """Parse tags string into list."""
+        if not self.tags:
+            return []
+        return [t.strip() for t in self.tags.split(",") if t.strip()]
+
+    def __repr__(self) -> str:
+        return f"<Note(id={self.id}, type={self.note_type}, title={self.title!r})>"
