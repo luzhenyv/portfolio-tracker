@@ -83,6 +83,9 @@ class UIConfig:
     # Number formatting
     decimal_places: int = 2
     percentage_decimal_places: int = 1
+    
+    # Admin features (trading and cash management UI)
+    enable_admin_ui: bool = True
 
 
 @dataclass

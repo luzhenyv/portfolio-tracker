@@ -9,14 +9,18 @@ FR-15: Portfolio Overview, Positions Detail, Watchlist/Valuation View
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from datetime import datetime, date
 
-from db import init_db, get_db
-from db.repositories import CashRepository
+from config import config
+from db import init_db, get_db, AssetStatus
+from db.repositories import CashRepository, AssetRepository, TradeRepository
 from analytics.portfolio import compute_portfolio
 from analytics.risk import compute_risk_metrics
 from analytics.valuation import run_valuation
 from analytics.performance import get_nav_period_returns, get_nav_series
 from decision.engine import decision_engine
+from services.position_service import buy_position, sell_position
+from services.asset_service import create_asset_with_data
 
 
 # Initialize database on app start
@@ -38,15 +42,24 @@ def render_sidebar() -> str:
     st.sidebar.title("📊 Portfolio Tracker")
     st.sidebar.markdown("---")
 
+    # Build page list based on config
+    pages = ["Overview", "Positions", "Watchlist"]
+    if config.ui.enable_admin_ui:
+        pages.append("Admin")
+
     page = st.sidebar.radio(
         "Navigation",
-        ["Overview", "Positions", "Watchlist"],
+        pages,
         label_visibility="collapsed",
     )
 
     st.sidebar.markdown("---")
-    st.sidebar.caption("💡 Read-only dashboard")
-    st.sidebar.caption("📅 Data: End-of-day prices")
+    if page == "Admin":
+        st.sidebar.warning("⚠️ Write-enabled mode")
+        st.sidebar.caption("Trade & cash operations")
+    else:
+        st.sidebar.caption("💡 Read-only dashboard")
+        st.sidebar.caption("📅 Data: End-of-day prices")
 
     return page
 
@@ -387,6 +400,348 @@ def render_positions_page():
         st.caption("Correlation of daily returns. Lower correlation = better diversification.")
 
 
+def get_current_cash_balance() -> float:
+    """Get current cash balance."""
+    db = get_db()
+    with db.session() as session:
+        cash_repo = CashRepository(session)
+        return cash_repo.get_balance()
+
+
+def render_admin_page():
+    """
+    Render Admin page for trading and cash operations.
+    
+    Allows users to:
+    - Buy/Sell stocks (with cash validation)
+    - Deposit/Withdraw cash
+    - View recent activity
+    """
+    st.header("⚙️ Admin: Trading & Cash")
+    st.warning("⚠️ **Write-enabled mode** - Operations will modify your portfolio data")
+    
+    # Get current cash balance
+    cash_balance = get_current_cash_balance()
+    
+    # Display current cash prominently
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.metric("💵 Available Cash", format_currency(cash_balance))
+    
+    st.divider()
+    
+    # Two-column layout: Trade Ticket | Cash Operations
+    trade_col, cash_col = st.columns(2)
+    
+    # --- TRADE TICKET ---
+    with trade_col:
+        st.subheader("📈 Trade Ticket")
+        
+        with st.form("trade_form", clear_on_submit=True):
+            ticker = st.text_input(
+                "Ticker Symbol *",
+                placeholder="AAPL",
+                help="Stock ticker symbol (e.g., AAPL, TSLA, NVDA)",
+            ).upper().strip()
+            
+            action = st.radio(
+                "Action *",
+                ["BUY", "SELL"],
+                horizontal=True,
+            )
+            
+            shares = st.number_input(
+                "Shares *",
+                min_value=0.01,
+                value=1.0,
+                step=1.0,
+                format="%.2f",
+                help="Number of shares to trade",
+            )
+            
+            price = st.number_input(
+                "Price per Share ($) *",
+                min_value=0.01,
+                value=100.0,
+                step=0.01,
+                format="%.2f",
+                help="Execution price per share",
+            )
+            
+            trade_date = st.date_input(
+                "Trade Date",
+                value=date.today(),
+                help="Date of trade execution",
+            )
+            
+            fees = st.number_input(
+                "Fees ($)",
+                min_value=0.0,
+                value=0.0,
+                step=0.01,
+                format="%.2f",
+                help="Brokerage fees and commissions",
+            )
+            
+            submitted = st.form_submit_button(
+                f"Execute {action}",
+                type="primary",
+                use_container_width=True,
+            )
+            
+            if submitted:
+                if not ticker:
+                    st.error("❌ Ticker symbol is required")
+                else:
+                    # Calculate trade cost
+                    trade_cost = shares * price + fees
+                    
+                    # Check cash sufficiency for BUY orders
+                    if action == "BUY":
+                        if trade_cost > cash_balance:
+                            st.error(
+                                f"❌ **Insufficient cash**\n\n"
+                                f"Trade cost: ${trade_cost:,.2f}\n\n"
+                                f"Available: ${cash_balance:,.2f}\n\n"
+                                f"Shortfall: ${trade_cost - cash_balance:,.2f}\n\n"
+                                f"⚠️ Negative cash balance is not allowed. Please deposit funds first."
+                            )
+                        else:
+                            # Execute BUY
+                            with st.spinner("Executing buy order..."):
+                                result = buy_position(
+                                    ticker=ticker,
+                                    shares=shares,
+                                    price=price,
+                                    trade_date=str(trade_date),
+                                    fees=fees,
+                                )
+                            
+                            if result.success:
+                                st.success(
+                                    f"✅ **BUY executed**\n\n"
+                                    f"{shares:,.2f} shares of {ticker} @ ${price:,.2f}\n\n"
+                                    f"Total cost: ${trade_cost:,.2f}\n\n"
+                                    f"{result.status_message}"
+                                )
+                                new_balance = get_current_cash_balance()
+                                st.info(f"💵 New cash balance: ${new_balance:,.2f}")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Trade failed: {', '.join(result.errors)}")
+                    
+                    elif action == "SELL":
+                        # Execute SELL (may create short position)
+                        with st.spinner("Executing sell order..."):
+                            result = sell_position(
+                                ticker=ticker,
+                                shares=shares,
+                                price=price,
+                                trade_date=str(trade_date),
+                                fees=fees,
+                            )
+                        
+                        if result.success:
+                            proceeds = shares * price - fees
+                            st.success(
+                                f"✅ **SELL executed**\n\n"
+                                f"{shares:,.2f} shares of {ticker} @ ${price:,.2f}\n\n"
+                                f"Net proceeds: ${proceeds:,.2f}\n\n"
+                                f"{result.status_message}"
+                            )
+                            if result.realized_pnl and result.realized_pnl != 0:
+                                pnl_emoji = "📈" if result.realized_pnl > 0 else "📉"
+                                st.info(f"{pnl_emoji} Realized P&L: ${result.realized_pnl:+,.2f}")
+                            new_balance = get_current_cash_balance()
+                            st.info(f"💵 New cash balance: ${new_balance:,.2f}")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Trade failed: {', '.join(result.errors)}")
+        
+        # Add Asset helper (if ticker doesn't exist)
+        with st.expander("➕ Add New Asset to Track"):
+            st.caption("Add a ticker before trading if it doesn't exist")
+            with st.form("add_asset_form", clear_on_submit=True):
+                new_ticker = st.text_input(
+                    "Ticker Symbol",
+                    placeholder="MSFT",
+                ).upper().strip()
+                
+                asset_status = st.selectbox(
+                    "Status",
+                    ["OWNED", "WATCHLIST"],
+                    index=0,
+                )
+                
+                add_submitted = st.form_submit_button("Add Asset")
+                
+                if add_submitted:
+                    if not new_ticker:
+                        st.error("❌ Ticker symbol is required")
+                    else:
+                        with st.spinner(f"Adding {new_ticker}..."):
+                            status = AssetStatus.OWNED if asset_status == "OWNED" else AssetStatus.WATCHLIST
+                            result = create_asset_with_data(new_ticker, status)
+                        
+                        if result.success:
+                            st.success(
+                                f"✅ Added {new_ticker}\n\n"
+                                f"Prices fetched: {result.prices_fetched}\n\n"
+                                f"{result.status_message}"
+                            )
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Failed: {', '.join(result.errors)}")
+    
+    # --- CASH OPERATIONS ---
+    with cash_col:
+        st.subheader("💵 Cash Operations")
+        
+        with st.form("cash_form", clear_on_submit=True):
+            cash_action = st.radio(
+                "Action *",
+                ["DEPOSIT", "WITHDRAW"],
+                horizontal=True,
+            )
+            
+            amount = st.number_input(
+                "Amount ($) *",
+                min_value=0.01,
+                value=1000.0,
+                step=100.0,
+                format="%.2f",
+                help="Amount to deposit or withdraw",
+            )
+            
+            cash_date = st.date_input(
+                "Transaction Date",
+                value=date.today(),
+                help="Date of cash transaction",
+            )
+            
+            description = st.text_input(
+                "Description",
+                placeholder="Initial capital, personal expense, etc.",
+                help="Optional note for this transaction",
+            )
+            
+            cash_submitted = st.form_submit_button(
+                f"Execute {cash_action}",
+                type="primary",
+                use_container_width=True,
+            )
+            
+            if cash_submitted:
+                if cash_action == "DEPOSIT":
+                    # Execute deposit
+                    db = get_db()
+                    with db.session() as session:
+                        cash_repo = CashRepository(session)
+                        tx = cash_repo.deposit(
+                            amount=amount,
+                            transaction_date=str(cash_date),
+                            description=description or None,
+                        )
+                    
+                    new_balance = get_current_cash_balance()
+                    st.success(
+                        f"✅ **Deposited ${amount:,.2f}**\n\n"
+                        f"Date: {cash_date}\n\n"
+                        f"💵 New balance: ${new_balance:,.2f}"
+                    )
+                    st.rerun()
+                
+                elif cash_action == "WITHDRAW":
+                    # Check sufficient balance
+                    if amount > cash_balance:
+                        st.error(
+                            f"❌ **Insufficient cash**\n\n"
+                            f"Withdrawal: ${amount:,.2f}\n\n"
+                            f"Available: ${cash_balance:,.2f}\n\n"
+                            f"Shortfall: ${amount - cash_balance:,.2f}\n\n"
+                            f"⚠️ Negative cash balance is not allowed."
+                        )
+                    else:
+                        # Execute withdrawal
+                        db = get_db()
+                        with db.session() as session:
+                            cash_repo = CashRepository(session)
+                            tx = cash_repo.withdraw(
+                                amount=amount,
+                                transaction_date=str(cash_date),
+                                description=description or None,
+                            )
+                        
+                        new_balance = get_current_cash_balance()
+                        st.success(
+                            f"✅ **Withdrew ${amount:,.2f}**\n\n"
+                            f"Date: {cash_date}\n\n"
+                            f"💵 New balance: ${new_balance:,.2f}"
+                        )
+                        st.rerun()
+    
+    st.divider()
+    
+    # --- RECENT ACTIVITY ---
+    st.subheader("📒 Recent Activity")
+    
+    activity_tabs = st.tabs(["Recent Trades", "Cash Ledger"])
+    
+    with activity_tabs[0]:
+        # Show recent trades
+        db = get_db()
+        with db.session() as session:
+            trade_repo = TradeRepository(session)
+            recent_trades = trade_repo.get_all_trades(limit=10)
+        
+        if recent_trades:
+            trade_data = []
+            for trade in recent_trades:
+                trade_data.append({
+                    "Date": trade.trade_date,
+                    "Ticker": trade.asset.ticker if trade.asset else "?",
+                    "Action": trade.action.value,
+                    "Shares": f"{trade.shares:,.2f}",
+                    "Price": f"${trade.price:,.2f}",
+                    "Fees": f"${trade.fees:,.2f}" if trade.fees else "-",
+                    "Realized P&L": f"${trade.realized_pnl:+,.2f}" if trade.realized_pnl else "-",
+                })
+            
+            st.dataframe(
+                pd.DataFrame(trade_data),
+                hide_index=True,
+                use_container_width=True,
+            )
+        else:
+            st.info("No trades yet")
+    
+    with activity_tabs[1]:
+        # Show cash ledger
+        db = get_db()
+        with db.session() as session:
+            cash_repo = CashRepository(session)
+            ledger = cash_repo.get_ledger(limit=10)
+        
+        if ledger:
+            ledger_data = []
+            for entry in ledger:
+                ledger_data.append({
+                    "Date": entry["date"],
+                    "Type": entry["type"],
+                    "Amount": f"${entry['amount']:+,.2f}",
+                    "Balance": f"${entry['balance']:,.2f}",
+                    "Description": entry["description"][:40] if entry["description"] else "-",
+                })
+            
+            st.dataframe(
+                pd.DataFrame(ledger_data),
+                hide_index=True,
+                use_container_width=True,
+            )
+        else:
+            st.info("No cash transactions yet")
+
+
 def render_watchlist_page():
     """
     Render Watchlist & Valuation page.
@@ -501,6 +856,8 @@ def main():
         render_positions_page()
     elif page == "Watchlist":
         render_watchlist_page()
+    elif page == "Admin":
+        render_admin_page()
 
 
 if __name__ == "__main__":
