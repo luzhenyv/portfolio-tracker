@@ -505,7 +505,7 @@ def render_admin_page():
             )
 
             submitted = st.form_submit_button(
-                f"Execute {action}",
+                "Execute",
                 type="primary",
             )
 
@@ -654,7 +654,7 @@ def render_admin_page():
             )
 
             cash_submitted = st.form_submit_button(
-                f"Execute {cash_action}",
+                "Execute",
                 type="primary",
             )
 
