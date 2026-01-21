@@ -6,9 +6,11 @@ FR-14: Read-only, executive-style, calm layout
 FR-15: Portfolio Overview, Positions Detail, Watchlist/Valuation View
 """
 
+from typing import Literal, Optional
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import time
 from datetime import datetime, date
 
 from config import config
@@ -72,6 +74,23 @@ def format_currency(value: float) -> str:
 def format_percentage(value: float, decimals: int = 1) -> str:
     """Format value as percentage."""
     return f"{value:.{decimals}%}"
+
+
+def celebrate_and_rerun(
+    msg: str = "Updating dashboard…",
+    delay: float = 3,
+    animation: Optional[Literal["balloons", "snow", "toast"]] = "balloons",
+):
+    """Display celebrations and wait before rerunning."""
+    if animation == "balloons":
+        st.balloons()
+    elif animation == "snow":
+        st.snow()
+    elif animation == "toast":
+        st.toast()
+    with st.status(msg, expanded=False):
+        time.sleep(delay)
+    st.rerun()
 
 
 def render_overview_page():
@@ -411,7 +430,7 @@ def get_current_cash_balance() -> float:
 def render_admin_page():
     """
     Render Admin page for trading and cash operations.
-    
+
     Allows users to:
     - Buy/Sell stocks (with cash validation)
     - Deposit/Withdraw cash
@@ -419,30 +438,30 @@ def render_admin_page():
     """
     st.header("⚙️ Admin: Trading & Cash")
     st.warning("⚠️ **Write-enabled mode** - Operations will modify your portfolio data")
-    
+
     # Get current cash balance
     cash_balance = get_current_cash_balance()
-    
+
     # Get existing tickers for selectbox
     db = get_db()
     with db.session() as session:
         asset_repo = AssetRepository(session)
         existing_tickers = sorted([a.ticker for a in asset_repo.get_all()])
-    
+
     # Display current cash prominently
     col1, col2 = st.columns([1, 3])
     with col1:
         st.metric("💵 Available Cash", format_currency(cash_balance))
-    
+
     st.divider()
-    
+
     # Two-column layout: Trade Ticket | Cash Operations
     trade_col, cash_col = st.columns(2)
-    
+
     # --- TRADE TICKET ---
     with trade_col:
         st.subheader("📈 Trade Ticket")
-        
+
         with st.form("trade_form", clear_on_submit=True):
             ticker_selection = st.selectbox(
                 "Ticker Symbol *",
@@ -453,13 +472,13 @@ def render_admin_page():
                 accept_new_options=True,
             )
             ticker = ticker_selection.upper().strip() if ticker_selection else ""
-            
+
             action = st.radio(
                 "Action *",
                 ["BUY", "SELL"],
                 horizontal=True,
             )
-            
+
             shares = st.number_input(
                 "Shares *",
                 min_value=0.01,
@@ -468,7 +487,7 @@ def render_admin_page():
                 format="%.2f",
                 help="Number of shares to trade",
             )
-            
+
             price = st.number_input(
                 "Price per Share ($) *",
                 min_value=0.01,
@@ -477,13 +496,13 @@ def render_admin_page():
                 format="%.2f",
                 help="Execution price per share",
             )
-            
+
             trade_date = st.date_input(
                 "Trade Date",
                 value=date.today(),
                 help="Date of trade execution",
             )
-            
+
             fees = st.number_input(
                 "Fees ($)",
                 min_value=0.0,
@@ -492,20 +511,19 @@ def render_admin_page():
                 format="%.2f",
                 help="Brokerage fees and commissions",
             )
-            
+
             submitted = st.form_submit_button(
                 f"Execute {action}",
                 type="primary",
-                use_container_width=True,
             )
-            
+
             if submitted:
                 if not ticker:
                     st.error("❌ Ticker symbol is required")
                 else:
                     # Calculate trade cost
                     trade_cost = shares * price + fees
-                    
+
                     # Check cash sufficiency for BUY orders
                     if action == "BUY":
                         if trade_cost > cash_balance:
@@ -526,7 +544,7 @@ def render_admin_page():
                                     trade_date=str(trade_date),
                                     fees=fees,
                                 )
-                            
+
                             if result.success:
                                 st.success(
                                     f"✅ **BUY executed**\n\n"
@@ -536,10 +554,10 @@ def render_admin_page():
                                 )
                                 new_balance = get_current_cash_balance()
                                 st.info(f"💵 New cash balance: ${new_balance:,.2f}")
-                                st.rerun()
+                                celebrate_and_rerun()
                             else:
                                 st.error(f"❌ Trade failed: {', '.join(result.errors)}")
-                    
+
                     elif action == "SELL":
                         # Execute SELL (may create short position)
                         with st.spinner("Executing sell order..."):
@@ -550,7 +568,7 @@ def render_admin_page():
                                 trade_date=str(trade_date),
                                 fees=fees,
                             )
-                        
+
                         if result.success:
                             proceeds = shares * price - fees
                             st.success(
@@ -564,10 +582,10 @@ def render_admin_page():
                                 st.info(f"{pnl_emoji} Realized P&L: ${result.realized_pnl:+,.2f}")
                             new_balance = get_current_cash_balance()
                             st.info(f"💵 New cash balance: ${new_balance:,.2f}")
-                            st.rerun()
+                            celebrate_and_rerun()
                         else:
                             st.error(f"❌ Trade failed: {', '.join(result.errors)}")
-        
+
         # Add Asset helper (if ticker doesn't exist)
         with st.expander("➕ Add New Asset to Track"):
             st.caption("Add a ticker before trading if it doesn't exist")
@@ -580,44 +598,48 @@ def render_admin_page():
                     accept_new_options=True,
                 )
                 new_ticker = new_ticker_selection.upper().strip() if new_ticker_selection else ""
-                
+
                 asset_status = st.selectbox(
                     "Status",
                     ["OWNED", "WATCHLIST"],
                     index=0,
                 )
-                
+
                 add_submitted = st.form_submit_button("Add Asset")
-                
+
                 if add_submitted:
                     if not new_ticker:
                         st.error("❌ Ticker symbol is required")
                     else:
                         with st.spinner(f"Adding {new_ticker}..."):
-                            status = AssetStatus.OWNED if asset_status == "OWNED" else AssetStatus.WATCHLIST
+                            status = (
+                                AssetStatus.OWNED
+                                if asset_status == "OWNED"
+                                else AssetStatus.WATCHLIST
+                            )
                             result = create_asset_with_data(new_ticker, status)
-                        
+
                         if result.success:
                             st.success(
                                 f"✅ Added {new_ticker}\n\n"
                                 f"Prices fetched: {result.prices_fetched}\n\n"
                                 f"{result.status_message}"
                             )
-                            st.rerun()
+                            celebrate_and_rerun()
                         else:
                             st.error(f"❌ Failed: {', '.join(result.errors)}")
-    
+
     # --- CASH OPERATIONS ---
     with cash_col:
         st.subheader("💵 Cash Operations")
-        
+
         with st.form("cash_form", clear_on_submit=True):
             cash_action = st.radio(
                 "Action *",
                 ["DEPOSIT", "WITHDRAW"],
                 horizontal=True,
             )
-            
+
             amount = st.number_input(
                 "Amount ($) *",
                 min_value=0.01,
@@ -626,25 +648,24 @@ def render_admin_page():
                 format="%.2f",
                 help="Amount to deposit or withdraw",
             )
-            
+
             cash_date = st.date_input(
                 "Transaction Date",
                 value=date.today(),
                 help="Date of cash transaction",
             )
-            
+
             description = st.text_input(
                 "Description",
                 placeholder="Initial capital, personal expense, etc.",
                 help="Optional note for this transaction",
             )
-            
+
             cash_submitted = st.form_submit_button(
                 f"Execute {cash_action}",
                 type="primary",
-                use_container_width=True,
             )
-            
+
             if cash_submitted:
                 if cash_action == "DEPOSIT":
                     # Execute deposit
@@ -656,15 +677,15 @@ def render_admin_page():
                             transaction_date=str(cash_date),
                             description=description or None,
                         )
-                    
+
                     new_balance = get_current_cash_balance()
                     st.success(
                         f"✅ **Deposited ${amount:,.2f}**\n\n"
                         f"Date: {cash_date}\n\n"
                         f"💵 New balance: ${new_balance:,.2f}"
                     )
-                    st.rerun()
-                
+                    celebrate_and_rerun()
+
                 elif cash_action == "WITHDRAW":
                     # Check sufficient balance
                     if amount > cash_balance:
@@ -685,72 +706,73 @@ def render_admin_page():
                                 transaction_date=str(cash_date),
                                 description=description or None,
                             )
-                        
+
                         new_balance = get_current_cash_balance()
                         st.success(
                             f"✅ **Withdrew ${amount:,.2f}**\n\n"
                             f"Date: {cash_date}\n\n"
                             f"💵 New balance: ${new_balance:,.2f}"
                         )
-                        st.rerun()
-    
-    st.divider()
-    
+                    celebrate_and_rerun()
     # --- RECENT ACTIVITY ---
     st.subheader("📒 Recent Activity")
-    
+
     activity_tabs = st.tabs(["Recent Trades", "Cash Ledger"])
-    
+
     with activity_tabs[0]:
         # Show recent trades
         db = get_db()
         with db.session() as session:
             trade_repo = TradeRepository(session)
             recent_trades = trade_repo.get_all_trades(limit=10)
-        
+
         if recent_trades:
             trade_data = []
             for trade in recent_trades:
-                trade_data.append({
-                    "Date": trade.trade_date,
-                    "Ticker": trade.asset.ticker if trade.asset else "?",
-                    "Action": trade.action.value,
-                    "Shares": f"{trade.shares:,.2f}",
-                    "Price": f"${trade.price:,.2f}",
-                    "Fees": f"${trade.fees:,.2f}" if trade.fees else "-",
-                    "Realized P&L": f"${trade.realized_pnl:+,.2f}" if trade.realized_pnl else "-",
-                })
-            
+                trade_data.append(
+                    {
+                        "Date": trade.trade_date,
+                        "Ticker": trade.asset.ticker if trade.asset else "?",
+                        "Action": trade.action.value,
+                        "Shares": f"{trade.shares:,.2f}",
+                        "Price": f"${trade.price:,.2f}",
+                        "Fees": f"${trade.fees:,.2f}" if trade.fees else "-",
+                        "Realized P&L": (
+                            f"${trade.realized_pnl:+,.2f}" if trade.realized_pnl else "-"
+                        ),
+                    }
+                )
+
             st.dataframe(
                 pd.DataFrame(trade_data),
                 hide_index=True,
-                use_container_width=True,
             )
         else:
             st.info("No trades yet")
-    
+
     with activity_tabs[1]:
         # Show cash ledger
         db = get_db()
         with db.session() as session:
             cash_repo = CashRepository(session)
             ledger = cash_repo.get_ledger(limit=10)
-        
+
         if ledger:
             ledger_data = []
             for entry in ledger:
-                ledger_data.append({
-                    "Date": entry["date"],
-                    "Type": entry["type"],
-                    "Amount": f"${entry['amount']:+,.2f}",
-                    "Balance": f"${entry['balance']:,.2f}",
-                    "Description": entry["description"][:40] if entry["description"] else "-",
-                })
-            
+                ledger_data.append(
+                    {
+                        "Date": entry["date"],
+                        "Type": entry["type"],
+                        "Amount": f"${entry['amount']:+,.2f}",
+                        "Balance": f"${entry['balance']:,.2f}",
+                        "Description": entry["description"][:40] if entry["description"] else "-",
+                    }
+                )
+
             st.dataframe(
                 pd.DataFrame(ledger_data),
                 hide_index=True,
-                use_container_width=True,
             )
         else:
             st.info("No cash transactions yet")
