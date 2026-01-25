@@ -119,8 +119,6 @@ def cmd_dashboard(args):
             "streamlit",
             "run",
             "ui/app.py",
-            "--server.headless",
-            "true",
         ]
     )
 
