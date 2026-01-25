@@ -117,6 +117,21 @@ portfolio-tracker/
     └── app.py              # Dashboard application
 ```
 
+## 🛠️ Maintenance & Backups
+
+The system provides a dedicated backup tool for data safety and auditability.
+
+```bash
+# Full SQLite binary backup (safe while app is running)
+python scripts/backup_portfolio.py --format sqlite --out backups/my_portfolio.db
+
+# Export core ledgers to CSV for audit
+python scripts/backup_portfolio.py --format csv --out backups/export_jan_25/
+```
+
+- **SQLite Format**: Best for disaster recovery. Creates a bit-for-bit copy.
+- **CSV Format**: Best for manual inspection or importing into Excel. Exports Assets, Trades, and Cash Transactions.
+
 ---
 
 ## 🚀 Getting Started
