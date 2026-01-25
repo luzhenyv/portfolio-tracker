@@ -25,6 +25,7 @@ dependencies = [
     "yfinance>=0.2.30",
     "sqlalchemy>=2.0.0",
     "plotly>=6.5.2",
+    "psycopg[binary]",
 ]
 
 [project.optional-dependencies]

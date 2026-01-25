@@ -19,6 +19,11 @@ class DatabaseConfig:
     @property
     def url(self) -> str:
         """SQLAlchemy connection URL."""
+        # Prefer direct URL if provided in environment
+        env_url = os.environ.get("PORTFOLIO_DB_URL") or os.environ.get("DATABASE_URL")
+        if env_url:
+            return env_url
+            
         return f"sqlite:///{self.path}"
 
 

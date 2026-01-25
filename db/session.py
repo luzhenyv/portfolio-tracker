@@ -21,6 +21,10 @@ from config import config
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
     """Enable foreign key constraints for SQLite connections."""
+    # Only run for SQLite
+    if "sqlite" not in str(dbapi_connection.__class__).lower():
+        return
+        
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
