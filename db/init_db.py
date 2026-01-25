@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.session import init_db, get_db
-from db.models import Asset, AssetStatus
+from db.models import Asset, AssetStatus, AssetType
 from services.position_service import execute_trade
 from db import TradeAction
 
@@ -27,9 +27,9 @@ def create_sample_data():
     db = get_db()
     
     sample_assets = [
-        {"ticker": "AAPL", "name": "Apple Inc.", "sector": "Technology", "status": AssetStatus.OWNED},
-        {"ticker": "MSFT", "name": "Microsoft Corporation", "sector": "Technology", "status": AssetStatus.OWNED},
-        {"ticker": "GOOGL", "name": "Alphabet Inc.", "sector": "Technology", "status": AssetStatus.WATCHLIST},
+        {"ticker": "AAPL", "name": "Apple Inc.", "sector": "Technology", "status": AssetStatus.OWNED, "asset_type": AssetType.STOCK},
+        {"ticker": "MSFT", "name": "Microsoft Corporation", "sector": "Technology", "status": AssetStatus.OWNED, "asset_type": AssetType.STOCK},
+        {"ticker": "GOOGL", "name": "Alphabet Inc.", "sector": "Technology", "status": AssetStatus.WATCHLIST, "asset_type": AssetType.STOCK},
     ]
     
     sample_trades = [
@@ -47,6 +47,7 @@ def create_sample_data():
                     name=asset_data["name"],
                     sector=asset_data["sector"],
                     status=asset_data["status"],
+                    asset_type=asset_data["asset_type"],
                 )
                 session.add(asset)
                 print(f"  Added asset: {asset_data['ticker']}")

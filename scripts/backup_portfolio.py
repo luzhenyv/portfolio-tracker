@@ -9,6 +9,15 @@ Usage:
     python scripts/backup_portfolio.py backup --format sqlite --out backups/test_snapshot.db
     python scripts/backup_portfolio.py restore --format csv --in backups/january_report/ --db-path db/test_restore.db
     python scripts/backup_portfolio.py restore --format sqlite --in backups/test_snapshot.db --db-path db/test_restore_sqlite.db
+    python scripts/backup_portfolio.py restore \
+        --format csv \
+        --in backups/january_report/ \
+        --db-url "postgresql+psycopg://portfolio_user:portfolio_password@localhost:5432/portfolio_tracker"
+
+    docker compose exec app python scripts/backup_portfolio.py restore \
+        --format csv \
+        --in backups/january_report/ \
+        --db-url "postgresql+psycopg://portfolio_user:portfolio_password@db:5432/portfolio_tracker"
 """
 
 import argparse
@@ -83,9 +92,9 @@ def export_to_csv(out_dir: str):
         assets_file = out_path / "assets.csv"
         with open(assets_file, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["id", "ticker", "name", "sector", "status", "created_at"])
+            writer.writerow(["id", "ticker", "name", "sector", "asset_type", "status", "created_at"])
             for a in assets:
-                writer.writerow([a.id, a.ticker, a.name, a.sector, a.status, a.created_at])
+                writer.writerow([a.id, a.ticker, a.name, a.sector, a.asset_type.value, a.status.value, a.created_at])
         print(f"  - Written {len(assets)} assets to {assets_file}")
 
         # Export Trades
@@ -124,6 +133,9 @@ def restore_from_csv(in_dir: str, db_url: str = None):
     db = init_db(db_url, if_drop=True)
     
     with db.session() as session:
+        # 0. Import required Enums
+        from db import AssetType
+        
         # 1. Restore Assets
         assets_file = in_path / "assets.csv"
         if assets_file.exists():
@@ -136,6 +148,7 @@ def restore_from_csv(in_dir: str, db_url: str = None):
                         ticker=row["ticker"],
                         name=row["name"] or None,
                         sector=row["sector"] or None,
+                        asset_type=AssetType(row["asset_type"]) if "asset_type" in row else AssetType.STOCK,
                         status=AssetStatus(row["status"]),
                         created_at=datetime.strptime(row["created_at"], "%Y-%m-%d %H:%M:%S.%f")
                     )
@@ -347,6 +360,10 @@ def main():
         "--db-path", 
         help="Override database path (source for backup, destination for restore)"
     )
+    parser.add_argument(
+        "--db-url", 
+        help="Database URL for restore (e.g., postgresql+psycopg://user:pass@host:port/dbname)"
+    )
 
     args = parser.parse_args()
     
@@ -374,8 +391,11 @@ def main():
         if args.format == "sqlite":
             restore_sqlite(args.input_path, db_path)
         else:
-            # Use sqlite:/// URL for CSV restore initialization
-            db_url = f"sqlite:///{db_path}"
+            # Use provided db_url or construct sqlite URL
+            if args.db_url:
+                db_url = args.db_url
+            else:
+                db_url = f"sqlite:///{db_path}"
             restore_from_csv(args.input_path, db_url)
 
 

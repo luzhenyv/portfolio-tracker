@@ -8,6 +8,7 @@ Exports commonly used components for convenient imports:
 from db.models import (
     Asset,
     AssetStatus,
+    AssetType,
     Base,
     CashTransaction,
     CashTransactionType,
@@ -35,6 +36,7 @@ __all__ = [
     # Models
     "Asset",
     "AssetStatus",
+    "AssetType",
     "Base",
     "CashTransaction",
     "CashTransactionType",

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 import yfinance as yf
 
 from config import config
-from db import Asset, AssetStatus, get_db
+from db import Asset, AssetStatus, AssetType, get_db
 from db.repositories import AssetRepository, PriceRepository, ValuationRepository
 from data.fetch_prices import PriceFetcher, ValuationFetcher
 
@@ -51,6 +51,7 @@ class AssetCreationResult:
 def create_asset_with_data(
     ticker: str,
     status: AssetStatus = AssetStatus.OWNED,
+    asset_type: AssetType = AssetType.STOCK,
     lookback_days: int | None = None,
 ) -> AssetCreationResult:
     """
@@ -70,13 +71,14 @@ def create_asset_with_data(
     Args:
         ticker: Stock ticker symbol (e.g., "AAPL", "TSLA")
         status: Asset status (OWNED or WATCHLIST)
+        asset_type: Type of asset (STOCK, ETF, CRYPTO, etc.)
         lookback_days: Number of days to fetch price history (default from config)
         
     Returns:
         AssetCreationResult with detailed outcome information
         
     Example:
-        >>> result = create_asset_with_data("AAPL", AssetStatus.OWNED)
+        >>> result = create_asset_with_data("AAPL", AssetStatus.OWNED, AssetType.STOCK)
         >>> print(result.status_message)
         "✅ Asset AAPL created with 365 prices and valuation metrics"
     """
@@ -92,6 +94,10 @@ def create_asset_with_data(
         asset_repo = AssetRepository(session)
         price_repo = PriceRepository(session)
         valuation_repo = ValuationRepository(session)
+        
+            ticker=ticker,
+            status=status,
+            asset_type=asset_type
         
         # Step 1: Get or create asset
         asset, created = asset_repo.get_or_create(ticker=ticker, status=status)

@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS assets (
     industry TEXT,
     currency TEXT DEFAULT 'USD',
     exchange TEXT,
+    asset_type TEXT CHECK(asset_type IN ('STOCK', 'ETF', 'CRYPTO', 'BOND', 'DERIVATIVE')) NOT NULL DEFAULT 'STOCK',
     status TEXT CHECK(status IN ('OWNED', 'WATCHLIST')) NOT NULL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );

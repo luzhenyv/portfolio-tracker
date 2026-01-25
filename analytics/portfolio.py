@@ -23,6 +23,7 @@ class PositionMetrics:
     """Metrics for a single position (long/short)."""
     ticker: str
     asset_id: int
+    asset_type: str
     long_shares: float
     long_avg_cost: float
     short_shares: float
@@ -228,6 +229,7 @@ class PortfolioAnalyzer:
             positions.append(PositionMetrics(
                 ticker=pos["ticker"],
                 asset_id=asset_id,
+                asset_type=pos["asset_type"].value if hasattr(pos["asset_type"], "value") else str(pos["asset_type"]),
                 long_shares=long_shares,
                 long_avg_cost=long_avg_cost,
                 short_shares=short_shares,
@@ -292,6 +294,7 @@ class PortfolioAnalyzer:
             {
                 "ticker": p.ticker,
                 "asset_id": p.asset_id,
+                "asset_type": p.asset_type,
                 "long_shares": p.long_shares,
                 "short_shares": p.short_shares,
                 "net_shares": p.net_shares,

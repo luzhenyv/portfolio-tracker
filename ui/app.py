@@ -14,7 +14,7 @@ import time
 from datetime import datetime, date
 
 from config import config
-from db import init_db, AssetStatus
+from db import init_db, AssetStatus, AssetType
 from analytics.portfolio import compute_portfolio
 from analytics.risk import compute_risk_metrics
 from analytics.valuation import run_valuation
@@ -164,55 +164,80 @@ def render_overview_page():
     allocation_data = []
 
     if cash_balance > 0:
-        allocation_data.append({"Asset": "Cash", "Value": cash_balance})
+        allocation_data.append({"Asset": "Cash", "Type": "CASH", "Value": cash_balance})
 
     for _, row in portfolio_df.iterrows():
         # Use net market value (long - short)
         market_value = row.get("net", 0)
         if market_value > 0:
-            allocation_data.append({"Asset": row["ticker"], "Value": market_value})
+            allocation_data.append({
+                "Asset": row["ticker"], 
+                "Type": row.get("asset_type", "STOCK"),
+                "Value": market_value
+            })
 
     if allocation_data:
         alloc_df = pd.DataFrame(allocation_data)
         total_value = alloc_df["Value"].sum()
         alloc_df["Percentage"] = alloc_df["Value"] / total_value * 100
 
-        # Create pie chart
-        fig = px.pie(
-            alloc_df,
-            values="Value",
-            names="Asset",
-            title="",
-            hole=0.4,  # Donut chart style
-            color_discrete_sequence=px.colors.qualitative.Set2,
-        )
-        fig.update_traces(
-            textposition="inside",
-            textinfo="percent+label",
-            hovertemplate="<b>%{label}</b><br>Value: $%{value:,.0f}<br>Weight: %{percent}<extra></extra>",
-        )
-        fig.update_layout(
-            showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
-            margin=dict(t=20, b=20, l=20, r=20),
-            height=350,
-        )
+        # Create pie charts
+        col_pie1, col_pie2 = st.columns(2)
 
-        col_chart, col_table = st.columns([2, 1])
-
-        with col_chart:
-            st.plotly_chart(fig)
-
-        with col_table:
-            # Show allocation table
-            display_alloc = alloc_df.copy()
-            display_alloc["Value"] = display_alloc["Value"].apply(lambda x: f"${x:,.0f}")
-            display_alloc["Percentage"] = display_alloc["Percentage"].apply(lambda x: f"{x:.1f}%")
-            st.dataframe(
-                display_alloc,
-                hide_index=True,
+        with col_pie1:
+            fig = px.pie(
+                alloc_df,
+                values="Value",
+                names="Asset",
+                title="By Ticker",
+                hole=0.4,
+                color_discrete_sequence=px.colors.qualitative.Set2,
             )
-            st.metric("Total", format_currency(total_value))
+            fig.update_traces(
+                textposition="inside",
+                textinfo="percent+label",
+                hovertemplate="<b>%{label}</b><br>Value: $%{value:,.0f}<br>Weight: %{percent}<extra></extra>",
+            )
+            fig.update_layout(
+                showlegend=False,
+                margin=dict(t=30, b=20, l=20, r=20),
+                height=300,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col_pie2:
+            type_df = alloc_df.groupby("Type")["Value"].sum().reset_index()
+            fig_type = px.pie(
+                type_df,
+                values="Value",
+                names="Type",
+                title="By Asset Type",
+                hole=0.4,
+                color_discrete_sequence=px.colors.qualitative.Pastel,
+            )
+            fig_type.update_traces(
+                textposition="inside",
+                textinfo="percent+label",
+                hovertemplate="<b>%{label}</b><br>Value: $%{value:,.0f}<br>Weight: %{percent}<extra></extra>",
+            )
+            fig_type.update_layout(
+                showlegend=False,
+                margin=dict(t=30, b=20, l=20, r=20),
+                height=300,
+            )
+            st.plotly_chart(fig_type, use_container_width=True)
+
+        st.markdown("")
+        # Show allocation table
+        display_alloc = alloc_df.copy()
+        display_alloc["Value"] = display_alloc["Value"].apply(lambda x: f"${x:,.0f}")
+        display_alloc["Percentage"] = display_alloc["Percentage"].apply(lambda x: f"{x:.1f}%")
+        st.dataframe(
+            display_alloc[["Asset", "Type", "Value", "Percentage"]],
+            hide_index=True,
+            use_container_width=True,
+        )
+        st.metric("Total Portfolio Value", format_currency(total_value))
     else:
         st.info("No assets to display. Add cash or positions.")
 
@@ -610,6 +635,12 @@ def render_admin_page():
                     index=0,
                 )
 
+                asset_type = st.selectbox(
+                    "Asset Type",
+                    ["STOCK", "ETF", "CRYPTO", "BOND", "DERIVATIVE"],
+                    index=0,
+                )
+
                 add_submitted = st.form_submit_button("Add Asset")
 
                 if add_submitted:
@@ -622,7 +653,11 @@ def render_admin_page():
                                 if asset_status == "OWNED"
                                 else AssetStatus.WATCHLIST
                             )
-                            result = create_asset_with_data(new_ticker, status)
+                            result = create_asset_with_data(
+                                new_ticker, 
+                                status, 
+                                asset_type=AssetType(asset_type)
+                            )
 
                         if result.success:
                             st.success(

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, joinedload
 from db.models import (
     Asset,
     AssetStatus,
+    AssetType,
     CashTransaction,
     CashTransactionType,
     Note,
@@ -74,6 +75,7 @@ class AssetRepository:
         self,
         ticker: str,
         status: AssetStatus,
+        asset_type: AssetType = AssetType.STOCK,
         name: str | None = None,
         sector: str | None = None,
         industry: str | None = None,
@@ -83,6 +85,7 @@ class AssetRepository:
         asset = Asset(
             ticker=ticker.upper(),
             status=status,
+            asset_type=asset_type,
             name=name,
             sector=sector,
             industry=industry,
@@ -522,6 +525,7 @@ class PositionRepository:
             select(
                 Asset.ticker,
                 Asset.id.label("asset_id"),
+                Asset.asset_type,
                 Position.long_shares,
                 Position.long_avg_cost,
                 Position.net_invested,
@@ -542,6 +546,7 @@ class PositionRepository:
             {
                 "asset_id": r.asset_id,
                 "ticker": r.ticker,
+                "asset_type": r.asset_type,
                 "long_shares": r.long_shares,
                 "long_avg_cost": r.long_avg_cost or 0.0,
                 "net_invested": r.net_invested or 0.0,

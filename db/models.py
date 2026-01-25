@@ -41,6 +41,15 @@ class AssetStatus(str, Enum):
     WATCHLIST = "WATCHLIST"
 
 
+class AssetType(str, Enum):
+    """Type of asset."""
+    STOCK = "STOCK"
+    ETF = "ETF"
+    CRYPTO = "CRYPTO"
+    BOND = "BOND"
+    DERIVATIVE = "DERIVATIVE"
+
+
 class ConfidenceLevel(str, Enum):
     """Confidence level for investment thesis."""
     LOW = "LOW"
@@ -72,6 +81,11 @@ class Asset(Base):
     industry: Mapped[Optional[str]] = mapped_column(String(100))
     currency: Mapped[str] = mapped_column(String(10), default="USD")
     exchange: Mapped[Optional[str]] = mapped_column(String(50))
+    asset_type: Mapped[AssetType] = mapped_column(
+        SQLEnum(AssetType, native_enum=False, length=20),
+        nullable=False,
+        default=AssetType.STOCK
+    )
     status: Mapped[AssetStatus] = mapped_column(
         SQLEnum(AssetStatus, native_enum=False, length=20),
         nullable=False

@@ -48,7 +48,7 @@ import argparse
 import sys
 from datetime import datetime
 
-from db import init_db, AssetStatus
+from db import init_db, AssetStatus, AssetType
 from db.repositories import AssetRepository
 from services.asset_service import (
     create_asset_with_data,
@@ -73,7 +73,13 @@ def cmd_init(args):
 def cmd_add_asset(args):
     """Add a new asset to track."""
     status = AssetStatus.OWNED if args.status == "OWNED" else AssetStatus.WATCHLIST
-    result = create_asset_with_data(args.ticker.upper(), status)
+    asset_type = AssetType(args.type.upper()) if args.type else AssetType.STOCK
+    
+    result = create_asset_with_data(
+        ticker=args.ticker.upper(), 
+        status=status,
+        asset_type=asset_type
+    )
     print_asset_creation_result(result)
 
 
@@ -400,6 +406,7 @@ def main():
     add_asset = subparsers.add_parser("add-asset", help="Add asset to track")
     add_asset.add_argument("ticker", help="Stock ticker symbol")
     add_asset.add_argument("--status", choices=["OWNED", "WATCHLIST"], default="WATCHLIST")
+    add_asset.add_argument("--type", choices=["STOCK", "ETF", "CRYPTO", "BOND", "DERIVATIVE"], default="STOCK", help="Asset type")
     add_asset.add_argument("--name", help="Company name")
     add_asset.add_argument("--sector", help="Sector")
     add_asset.add_argument("--exchange", help="Exchange")
