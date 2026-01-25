@@ -6,8 +6,9 @@ Provides tools to:
 2. Export core ledgers (Assets, Trades, Cash Transactions) to CSV for audit.
 
 Usage:
-    python scripts/backup_portfolio.py --format sqlite --out backups/portfolio_backup.db
-    python scripts/backup_portfolio.py --format csv --out backups/export_20250125/
+    python scripts/backup_portfolio.py backup --format sqlite --out backups/test_snapshot.db
+    python scripts/backup_portfolio.py restore --format csv --in backups/january_report/ --db-path db/test_restore.db
+    python scripts/backup_portfolio.py restore --format sqlite --in backups/test_snapshot.db --db-path db/test_restore_sqlite.db
 """
 
 import argparse
