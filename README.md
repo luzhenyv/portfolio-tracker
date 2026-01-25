@@ -77,6 +77,33 @@ This reflects your actual cash at risk, not the original purchase price.
 
 ---
 
+## 🚀 Deployment (Docker & PostgreSQL)
+
+The project can be deployed using Docker and PostgreSQL for a more robust setup.
+
+### ⚡ Quick Start
+
+1. **Ensure Docker and Docker Compose are installed.**
+2. **Run the following command:**
+   ```bash
+   docker compose up --build
+   ```
+3. **Access the dashboard** at `http://localhost:8501`.
+
+### ⚙️ Database Configuration
+
+By default, the Docker setup uses PostgreSQL with the following credentials (defined in `docker-compose.yml`):
+- **User**: `portfolio_user`
+- **Password**: `portfolio_password`
+- **Database**: `portfolio_tracker`
+
+To use an external database, set the `PORTFOLIO_DB_URL` environment variable:
+```bash
+PORTFOLIO_DB_URL=postgresql+psycopg://user:password@host:port/dbname
+```
+
+---
+
 ## 🧱 Project Structure
 
 ```text
