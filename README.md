@@ -214,6 +214,12 @@ python main.py update
 python -m jobs.daily_update
 ```
 
+### 🔧 Manual Valuation (Fix Missing Data)
+
+If the Watchlist/Overview has missing valuation or price data, use the manual valuation tool:
+
+- See [docs/manual_valuation.md](docs/manual_valuation.md)
+
 ### 5️⃣ Launch Dashboard
 
 ```bash
