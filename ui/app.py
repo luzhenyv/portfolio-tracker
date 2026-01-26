@@ -499,7 +499,6 @@ def render_admin_page():
                 index=None,
                 placeholder="Select or enter ticker (e.g. AAPL)",
                 help="Stock ticker symbol (e.g., AAPL, TSLA, NVDA)",
-                accept_new_options=True,
             )
             ticker = ticker_selection.upper().strip() if ticker_selection else ""
 
@@ -620,12 +619,9 @@ def render_admin_page():
         with st.expander("➕ Add New Asset to Track"):
             st.caption("Add a ticker before trading if it doesn't exist")
             with st.form("add_asset_form", clear_on_submit=True):
-                new_ticker_selection = st.selectbox(
+                new_ticker_selection = st.text_input(
                     "Ticker Symbol",
-                    options=existing_tickers,
-                    index=None,
                     placeholder="Enter new ticker (e.g. MSFT)",
-                    accept_new_options=True,
                 )
                 new_ticker = new_ticker_selection.upper().strip() if new_ticker_selection else ""
 

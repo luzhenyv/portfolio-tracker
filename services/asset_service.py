@@ -95,12 +95,8 @@ def create_asset_with_data(
         price_repo = PriceRepository(session)
         valuation_repo = ValuationRepository(session)
         
-            ticker=ticker,
-            status=status,
-            asset_type=asset_type
-        
         # Step 1: Get or create asset
-        asset, created = asset_repo.get_or_create(ticker=ticker, status=status)
+        asset, created = asset_repo.get_or_create(ticker=ticker, status=status, asset_type=asset_type)
         
         if not created and asset.status != status:
             asset_repo.update_status(asset.id, status)
