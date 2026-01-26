@@ -431,7 +431,10 @@ def render_positions_page():
         "market_value": st.column_config.TextColumn("Market Value", width="medium"),
         "display_pnl": st.column_config.TextColumn("P&L", width="small"),
         "pnl_pct": st.column_config.TextColumn("P&L %", width="small"),
-        "net_weight": st.column_config.TextColumn("Weight", width="small"),
+        "net_weight": st.column_config.TextColumn(
+            "Exposure %",
+            width="small",
+        ),
         "action": st.column_config.TextColumn("Action", width="small"),
         "reasons": st.column_config.TextColumn("Reasons", width="large"),
     }
@@ -442,7 +445,10 @@ def render_positions_page():
         column_config=column_config,
     )
 
-    st.caption("💡 Weights are cost-based. Risk metrics are historical and EOD-based.")
+    st.caption(
+        "💡 Exposure % = $\\frac{|MV_{net}|}{\\sum |MV_{net}|}$ for positions only (excludes cash). "
+        "Risk metrics are historical and EOD-based."
+    )
 
     # Correlation matrix (if multiple positions)
     if not risk["correlation"].empty and len(risk["correlation"]) > 1:
