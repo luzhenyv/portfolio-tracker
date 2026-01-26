@@ -426,14 +426,35 @@ def render_positions_page():
     column_config = {
         "ticker": st.column_config.TextColumn("Ticker", width="small"),
         "net_shares": st.column_config.TextColumn("Shares", width="small"),
-        "avg_cost": st.column_config.TextColumn("Net Avg Cost", width="small"),
-        "close": st.column_config.TextColumn("Current", width="small"),
-        "market_value": st.column_config.TextColumn("Market Value", width="medium"),
-        "display_pnl": st.column_config.TextColumn("P&L", width="small"),
-        "pnl_pct": st.column_config.TextColumn("P&L %", width="small"),
+        "avg_cost": st.column_config.TextColumn(
+            "Net Avg Cost",
+            width="small",
+            help="Average cost per share based on net invested capital (cost basis / net shares)"
+        ),
+        "close": st.column_config.TextColumn(
+            "Current",
+            width="small",
+            help="Latest end-of-day price per share"
+        ),
+        "market_value": st.column_config.TextColumn(
+            "Market Value",
+            width="medium",
+            help="Net market value = (long shares × price) - (short shares × price)"
+        ),
+        "display_pnl": st.column_config.TextColumn(
+            "P&L",
+            width="small",
+            help="Unrealized profit/loss = net market value - net invested capital"
+        ),
+        "pnl_pct": st.column_config.TextColumn(
+            "P&L %",
+            width="small",
+            help="Return on invested capital = (net market value - net invested) / net invested"
+        ),
         "net_weight": st.column_config.TextColumn(
             "Exposure %",
             width="small",
+            help="Share of absolute net exposure: $\\frac{|MV_{net}|}{\\sum |MV_{net}|}$ (positions only, excludes cash)"
         ),
         "action": st.column_config.TextColumn("Action", width="small"),
         "reasons": st.column_config.TextColumn("Reasons", width="large"),
