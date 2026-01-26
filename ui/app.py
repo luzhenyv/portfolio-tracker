@@ -225,7 +225,7 @@ def render_overview_page():
                 margin=dict(t=30, b=20, l=20, r=20),
                 height=300,
             )
-            st.plotly_chart(fig_type, use_container_width=True)
+            st.plotly_chart(fig_type)
 
         st.markdown("")
         # Show allocation table
@@ -235,7 +235,6 @@ def render_overview_page():
         st.dataframe(
             display_alloc[["Asset", "Type", "Value", "Percentage"]],
             hide_index=True,
-            use_container_width=True,
         )
         st.metric("Total Portfolio Value", format_currency(total_value))
     else:

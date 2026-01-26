@@ -7,17 +7,26 @@ Provides tools to:
 
 Usage:
     python scripts/backup_portfolio.py backup --format sqlite --out backups/test_snapshot.db
-    python scripts/backup_portfolio.py restore --format csv --in backups/january_report/ --db-path db/test_restore.db
     python scripts/backup_portfolio.py restore --format sqlite --in backups/test_snapshot.db --db-path db/test_restore_sqlite.db
+    
+    # Restore from CSV export backup
+    python scripts/backup_portfolio.py restore \
+      --format csv \
+      --in backups/january_report/ \
+      --fetch-valuations
+    
+    # Restore with valuation fetching (populates valuation_metrics for Watchlist)
     python scripts/backup_portfolio.py restore \
         --format csv \
         --in backups/january_report/ \
-        --db-url "postgresql+psycopg://portfolio_user:portfolio_password@localhost:5432/portfolio_tracker"
+        --db-url "postgresql+psycopg://portfolio_user:portfolio_password@localhost:5432/portfolio_tracker" \
+        --fetch-valuations
 
     docker compose exec app python scripts/backup_portfolio.py restore \
         --format csv \
         --in backups/january_report/ \
-        --db-url "postgresql+psycopg://portfolio_user:portfolio_password@db:5432/portfolio_tracker"
+        --db-url "postgresql+psycopg://portfolio_user:portfolio_password@db:5432/portfolio_tracker" \
+        --fetch-valuations
 """
 
 import argparse
@@ -120,8 +129,14 @@ def export_to_csv(out_dir: str):
     print(f"✅ Export complete.")
 
 
-def restore_from_csv(in_dir: str, db_url: str = None):
-    """Restore core ledgers from CSV files and rebuild positions."""
+def restore_from_csv(in_dir: str, db_url: str = None, fetch_valuations: bool = False):
+    """Restore core ledgers from CSV files and rebuild positions.
+    
+    Args:
+        in_dir: Directory containing CSV files to restore from.
+        db_url: Database URL (optional, defaults to config).
+        fetch_valuations: If True, fetch valuation metrics after restore.
+    """
     print(f"🔄 Restoring from CSV in {in_dir}...")
     
     in_path = Path(in_dir)
@@ -203,6 +218,42 @@ def restore_from_csv(in_dir: str, db_url: str = None):
     print("🏗️ Rebuilding positions from trade history...")
     rebuild_positions(db)
     print("✅ Restore complete.")
+    
+    # 5. Fetch Valuations (if requested)
+    if fetch_valuations:
+        print("\n📊 Fetching valuation metrics...")
+        fetch_valuations_after_restore(db)
+        print("✅ Valuation metrics populated.")
+
+
+def fetch_valuations_after_restore(db: DatabaseManager):
+    """
+    Fetch valuation metrics for all assets after restore.
+    
+    This populates the valuation_metrics table, which is required for
+    the Watchlist page to display data.
+    """
+    from data.fetch_prices import ValuationFetcher
+    import logging
+    
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    
+    try:
+        fetcher = ValuationFetcher()
+        results = fetcher.fetch_all_assets()
+        
+        success_count = sum(1 for r in results if r.success)
+        logger.info(f"Valuation fetch complete: {success_count}/{len(results)} successful")
+        
+        if success_count > 0:
+            print(f"   \u2705 Fetched valuations for {success_count} assets")
+        else:
+            print(f"   \u26a0\ufe0f No valuations fetched (0/{len(results)})")
+            
+    except Exception as e:
+        logger.error(f"Failed to fetch valuations: {e}")
+        print(f"   \u274c Error fetching valuations: {e}")
 
 
 def rebuild_positions(db: DatabaseManager):
@@ -364,6 +415,11 @@ def main():
         "--db-url", 
         help="Database URL for restore (e.g., postgresql+psycopg://user:pass@host:port/dbname)"
     )
+    parser.add_argument(
+        "--fetch-valuations",
+        action="store_true",
+        help="Fetch valuation metrics after restore (populates valuation_metrics table)"
+    )
 
     args = parser.parse_args()
     
@@ -396,7 +452,7 @@ def main():
                 db_url = args.db_url
             else:
                 db_url = f"sqlite:///{db_path}"
-            restore_from_csv(args.input_path, db_url)
+            restore_from_csv(args.input_path, db_url, fetch_valuations=args.fetch_valuations)
 
 
 if __name__ == "__main__":
