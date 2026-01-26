@@ -906,12 +906,36 @@ def render_watchlist_page():
         hide_index=True,
         column_config={
             "ticker": st.column_config.TextColumn("Ticker", width="small"),
-            "pe_forward": st.column_config.TextColumn("Fwd P/E", width="small"),
-            "peg": st.column_config.TextColumn("PEG", width="small"),
-            "ev_ebitda": st.column_config.TextColumn("EV/EBITDA", width="small"),
-            "revenue_growth": st.column_config.TextColumn("Rev Growth", width="small"),
-            "eps_growth": st.column_config.TextColumn("EPS Growth", width="small"),
-            "valuation_action": st.column_config.TextColumn("Signal", width="small"),
+            "pe_forward": st.column_config.TextColumn(
+                "Fwd P/E",
+                width="small",
+                help="Forward Price-to-Earnings ratio: market price / expected next-year EPS (lower = cheaper)"
+            ),
+            "peg": st.column_config.TextColumn(
+                "PEG",
+                width="small",
+                help="Price/Earnings-to-Growth ratio: (P/E) / EPS growth % (< 1 = undervalued, > 2 = overvalued)"
+            ),
+            "ev_ebitda": st.column_config.TextColumn(
+                "EV/EBITDA",
+                width="small",
+                help="Enterprise Value / EBITDA multiple: measures valuation relative to operating earnings"
+            ),
+            "revenue_growth": st.column_config.TextColumn(
+                "Rev Growth",
+                width="small",
+                help="Year-over-year revenue growth rate (trailing or projected)"
+            ),
+            "eps_growth": st.column_config.TextColumn(
+                "EPS Growth",
+                width="small",
+                help="Year-over-year earnings per share growth rate"
+            ),
+            "valuation_action": st.column_config.TextColumn(
+                "Signal",
+                width="small",
+                help="BUY = attractive valuation | WAIT = mixed signals | AVOID = overvalued"
+            ),
         },
     )
 
