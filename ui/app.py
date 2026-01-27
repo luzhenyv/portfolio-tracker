@@ -377,6 +377,18 @@ def render_overview_page():
 
         # Style the dataframe
         display_df = decisions[["ticker", "weight", "action", "reasons"]].copy()
+
+        # Apply colored emojis to Action column
+        def format_action(val):
+            if val == "HOLD":
+                return "🔵 HOLD"
+            elif val == "REDUCE":
+                return "🟠 REDUCE"
+            elif val == "REVIEW":
+                return "🟡 REVIEW"
+            return val
+
+        display_df["action"] = display_df["action"].apply(format_action)
         display_df["weight"] = display_df["weight"].apply(lambda x: f"{x:.1%}")
 
         st.dataframe(
@@ -423,6 +435,18 @@ def render_positions_page():
         merged = portfolio_df.copy()
         merged["action"] = "HOLD"
         merged["reasons"] = ""
+
+    # Apply colored emojis to Action column
+    def format_action(val):
+        if val == "HOLD":
+            return "🔵 HOLD"
+        elif val == "REDUCE":
+            return "🟠 REDUCE"
+        elif val == "REVIEW":
+            return "🟡 REVIEW"
+        return val
+
+    merged["action"] = merged["action"].apply(format_action)
 
     # Format for display
     display_df = merged.copy()
@@ -930,7 +954,17 @@ def render_watchlist_page():
         else:
             vm_df[col] = None
 
-    vm_df["valuation_action"] = valuation_df["valuation_action"]
+    # Apply colored emojis to Signal column
+    def format_signal(val):
+        if val == "BUY":
+            return "🟢 BUY"
+        elif val == "WAIT":
+            return "🟡 WAIT"
+        elif val == "AVOID":
+            return "🔴 AVOID"
+        return val
+
+    vm_df["valuation_action"] = valuation_df["valuation_action"].apply(format_signal)
 
     # Add override flags
     for col in [
