@@ -383,10 +383,10 @@ def render_overview_page():
             display_df,
             hide_index=True,
             column_config={
-                "ticker": st.column_config.TextColumn("Ticker", width="small"),
-                "weight": st.column_config.TextColumn("Weight", width="small"),
-                "action": st.column_config.TextColumn("Action", width="small"),
-                "reasons": st.column_config.TextColumn("Reasons", width="large"),
+                "ticker": st.column_config.TextColumn("Ticker"),
+                "weight": st.column_config.TextColumn("Weight"),
+                "action": st.column_config.TextColumn("Action"),
+                "reasons": st.column_config.TextColumn("Reasons"),
             },
         )
 
@@ -463,38 +463,33 @@ def render_positions_page():
 
     # Rename columns for display
     column_config = {
-        "ticker": st.column_config.TextColumn("Ticker", width="small"),
-        "net_shares": st.column_config.TextColumn("Shares", width="small"),
+        "ticker": st.column_config.TextColumn("Ticker"),
+        "net_shares": st.column_config.TextColumn("Shares"),
         "avg_cost": st.column_config.TextColumn(
             "Net Avg Cost",
-            width="small",
             help="Average cost per share based on net invested capital (cost basis / net shares)",
         ),
         "close": st.column_config.TextColumn(
-            "Current", width="small", help="Latest end-of-day price per share"
+            "Current", help="Latest end-of-day price per share"
         ),
         "market_value": st.column_config.TextColumn(
             "Market Value",
-            width="medium",
             help="Net market value = (long shares × price) - (short shares × price)",
         ),
         "display_pnl": st.column_config.TextColumn(
             "P&L",
-            width="small",
             help="Unrealized profit/loss = net market value - net invested capital",
         ),
         "pnl_pct": st.column_config.TextColumn(
             "P&L %",
-            width="small",
             help="Return on invested capital = (net market value - net invested) / net invested",
         ),
         "net_weight": st.column_config.TextColumn(
             "Exposure %",
-            width="small",
             help="Share of absolute net exposure: $\\frac{|MV_{net}|}{\\sum |MV_{net}|}$ (positions only, excludes cash)",
         ),
-        "action": st.column_config.TextColumn("Action", width="small"),
-        "reasons": st.column_config.TextColumn("Reasons", width="large"),
+        "action": st.column_config.TextColumn("Action"),
+        "reasons": st.column_config.TextColumn("Reasons"),
     }
 
     st.dataframe(
@@ -909,23 +904,11 @@ def render_watchlist_page():
     # ====== VALUATION MEASURES TABLE ======
     st.subheader("📊 Valuation Measures")
 
-    valuation_measures_cols = [
-        "ticker",
-        "asset_id",
-        "market_cap",
-        "enterprise_value",
-        "pe_trailing",
-        "pe_forward",
-        "peg",
-        "price_to_sales",
-        "price_to_book",
-        "ev_to_revenue",
-        "ev_ebitda",
-        "valuation_action",
-    ]
-
     # Create editor dataframe for valuation measures
     vm_df = valuation_df[["ticker", "asset_id"]].copy()
+
+    # Large number fields for VM
+    vm_large_fields = ["market_cap", "enterprise_value"]
 
     # Add valuation measure columns with formatting helpers
     for col in [
@@ -940,7 +923,10 @@ def render_watchlist_page():
         "ev_ebitda",
     ]:
         if col in valuation_df.columns:
-            vm_df[col] = valuation_df[col]
+            if col in vm_large_fields:
+                vm_df[col] = valuation_df[col].apply(_format_large_number)
+            else:
+                vm_df[col] = valuation_df[col]
         else:
             vm_df[col] = None
 
@@ -983,59 +969,49 @@ def render_watchlist_page():
             ]
         ],
         column_config={
-            "ticker": st.column_config.TextColumn("Ticker", width="small"),
+            "ticker": st.column_config.TextColumn("Ticker"),
             "asset_id": None,  # Hidden
-            "market_cap": st.column_config.NumberColumn(
+            "market_cap": st.column_config.TextColumn(
                 "Market Cap",
-                width="medium",
-                format="%.2e",
                 help="Market Capitalization = Share Price × Shares Outstanding",
             ),
-            "enterprise_value": st.column_config.NumberColumn(
+            "enterprise_value": st.column_config.TextColumn(
                 "Enterprise Value",
-                width="medium",
-                format="%.2e",
                 help="EV = Market Cap + Debt - Cash",
             ),
             "pe_trailing": st.column_config.NumberColumn(
                 "Trailing P/E",
-                width="small",
                 format="%.2f",
                 help="Trailing Price-to-Earnings: market price / TTM EPS",
             ),
             "pe_forward": st.column_config.NumberColumn(
                 "Forward P/E",
-                width="small",
                 format="%.2f",
                 help="Forward Price-to-Earnings: market price / estimated next-year EPS",
             ),
             "peg": st.column_config.NumberColumn(
                 "PEG Ratio",
-                width="small",
                 format="%.2f",
                 help="P/E-to-Growth: (P/E) / EPS growth % (< 1 = undervalued)",
             ),
             "price_to_sales": st.column_config.NumberColumn(
                 "Price/Sales",
-                width="small",
                 format="%.2f",
                 help="Price-to-Sales ratio (trailing 12 months)",
             ),
             "price_to_book": st.column_config.NumberColumn(
                 "Price/Book",
-                width="small",
                 format="%.2f",
                 help="Price-to-Book ratio (most recent quarter)",
             ),
             "ev_to_revenue": st.column_config.NumberColumn(
-                "EV/Revenue", width="small", format="%.2f", help="Enterprise Value / Revenue"
+                "EV/Revenue", format="%.2f", help="Enterprise Value / Revenue"
             ),
             "ev_ebitda": st.column_config.NumberColumn(
-                "EV/EBITDA", width="small", format="%.2f", help="Enterprise Value / EBITDA"
+                "EV/EBITDA", format="%.2f", help="Enterprise Value / EBITDA"
             ),
             "valuation_action": st.column_config.TextColumn(
                 "Signal",
-                width="small",
                 help="BUY = attractive valuation | WAIT = mixed | AVOID = overvalued",
             ),
             # Hide override flags
@@ -1065,6 +1041,14 @@ def render_watchlist_page():
     # Create editor dataframe for financial highlights
     fh_df = valuation_df[["ticker", "asset_id"]].copy()
 
+    # Large number fields for FH
+    fh_large_fields = [
+        "revenue_ttm",
+        "net_income_ttm",
+        "total_cash",
+        "levered_free_cash_flow",
+    ]
+
     # Profitability metrics (stored as decimals, display as %)
     for col in ["profit_margin", "return_on_assets", "return_on_equity"]:
         if col in valuation_df.columns:
@@ -1075,7 +1059,10 @@ def render_watchlist_page():
     # Income statement metrics (large numbers)
     for col in ["revenue_ttm", "net_income_ttm", "diluted_eps_ttm"]:
         if col in valuation_df.columns:
-            fh_df[col] = valuation_df[col]
+            if col in fh_large_fields:
+                fh_df[col] = valuation_df[col].apply(_format_large_number)
+            else:
+                fh_df[col] = valuation_df[col]
         else:
             fh_df[col] = None
 
@@ -1085,6 +1072,8 @@ def render_watchlist_page():
             if col == "total_debt_to_equity":
                 # D/E is already a percentage in yfinance
                 fh_df[col] = valuation_df[col]
+            elif col in fh_large_fields:
+                fh_df[col] = valuation_df[col].apply(_format_large_number)
             else:
                 fh_df[col] = valuation_df[col]
         else:
@@ -1127,63 +1116,50 @@ def render_watchlist_page():
             ]
         ],
         column_config={
-            "ticker": st.column_config.TextColumn("Ticker", width="small"),
+            "ticker": st.column_config.TextColumn("Ticker"),
             "asset_id": None,  # Hidden
             # Profitability
             "profit_margin": st.column_config.NumberColumn(
                 "Profit Margin",
-                width="small",
                 format="%.2f%%",
                 help="Net Income / Revenue (trailing 12 months)",
             ),
             "return_on_assets": st.column_config.NumberColumn(
                 "ROA (ttm)",
-                width="small",
                 format="%.2f%%",
                 help="Return on Assets (trailing 12 months)",
             ),
             "return_on_equity": st.column_config.NumberColumn(
                 "ROE (ttm)",
-                width="small",
                 format="%.2f%%",
                 help="Return on Equity (trailing 12 months)",
             ),
             # Income Statement
-            "revenue_ttm": st.column_config.NumberColumn(
+            "revenue_ttm": st.column_config.TextColumn(
                 "Revenue (ttm)",
-                width="medium",
-                format="%.2e",
                 help="Total Revenue (trailing 12 months)",
             ),
-            "net_income_ttm": st.column_config.NumberColumn(
+            "net_income_ttm": st.column_config.TextColumn(
                 "Net Income (ttm)",
-                width="medium",
-                format="%.2e",
                 help="Net Income Available to Common (trailing 12 months)",
             ),
             "diluted_eps_ttm": st.column_config.NumberColumn(
                 "Diluted EPS",
-                width="small",
                 format="%.2f",
                 help="Diluted Earnings Per Share (trailing 12 months)",
             ),
             # Balance Sheet & Cash Flow
-            "total_cash": st.column_config.NumberColumn(
+            "total_cash": st.column_config.TextColumn(
                 "Total Cash (mrq)",
-                width="medium",
-                format="%.2e",
                 help="Total Cash (most recent quarter)",
             ),
             "total_debt_to_equity": st.column_config.NumberColumn(
                 "Debt/Equity (mrq)",
-                width="small",
                 format="%.2f%%",
                 help="Total Debt / Equity (most recent quarter)",
             ),
-            "levered_free_cash_flow": st.column_config.NumberColumn(
+            "levered_free_cash_flow": st.column_config.TextColumn(
                 "Levered FCF (ttm)",
-                width="medium",
-                format="%.2e",
                 help="Levered Free Cash Flow (trailing 12 months)",
             ),
             # Hide override flags
@@ -1261,7 +1237,7 @@ def _format_change_value(value: float | None, field: str) -> str:
     ]:
         return _format_large_number(value)
 
-    # Ratio fields
+    # Other fields
     return f"{value:.2f}"
 
 
@@ -1283,6 +1259,38 @@ def _format_large_number(value: float | None) -> str:
         return f"{sign}{abs_val / 1e3:.2f}K"
     else:
         return f"{sign}{abs_val:.2f}"
+
+
+def _parse_large_number(value: str | float | None) -> float | None:
+    """Parse string with B/T notation (e.g., '1.45T') back to float."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    if not isinstance(value, str):
+        return None
+
+    value = value.strip().upper()
+    if not value or value == "—":
+        return None
+
+    # Handle multipliers
+    multipliers = {"T": 1e12, "B": 1e9, "M": 1e6, "K": 1e3}
+
+    value = value.replace(",", "")
+
+    suffix = value[-1]
+    if suffix in multipliers:
+        try:
+            return float(value[:-1]) * multipliers[suffix]
+        except ValueError:
+            return None
+
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 def _detect_valuation_changes(
@@ -1334,6 +1342,10 @@ def _detect_valuation_changes(
             new_val = row[field]
             orig_val = orig_row.iloc[0][field]
 
+            # Parse large number if needed
+            if field in ["market_cap", "enterprise_value"]:
+                new_val = _parse_large_number(new_val)
+
             if _values_differ(new_val, orig_val):
                 changes.append(
                     {
@@ -1381,6 +1393,10 @@ def _detect_valuation_changes(
 
             new_val = row[field]
             orig_val = orig_row.iloc[0][field]
+
+            # Parse large number if needed
+            if field in ["revenue_ttm", "net_income_ttm", "total_cash", "levered_free_cash_flow"]:
+                new_val = _parse_large_number(new_val)
 
             if _values_differ(new_val, orig_val):
                 changes.append(
