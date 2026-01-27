@@ -202,7 +202,11 @@ class ValuationFetcher:
     """
     Fetches valuation metrics from Yahoo Finance.
     
-    FR-8: Auto-fetch Forward P/E, PEG, EV/EBITDA, growth metrics
+    Yahoo-aligned fields matching "Statistics" page:
+    - Valuation Measures: Market Cap, EV, P/E, PEG, P/S, P/B, EV/Rev, EV/EBITDA
+    - Financial Highlights: Margins, ROA, ROE, Revenue, Net Income, EPS, Cash, Debt, FCF
+    
+    FR-8: Auto-fetch via yfinance Ticker.info
     FR-9: Missing fields stored as NULL (no synthetic values)
     """
     
@@ -220,18 +224,53 @@ class ValuationFetcher:
             info = yf.Ticker(ticker).info
             
             return {
+                # Valuation Measures
+                "market_cap": self._safe_metric(info.get("marketCap")),
+                "enterprise_value": self._safe_metric(info.get("enterpriseValue")),
+                "pe_trailing": self._safe_metric(info.get("trailingPE")),
                 "pe_forward": self._safe_metric(info.get("forwardPE")),
                 "peg": self._safe_metric(info.get("pegRatio")),
+                "price_to_sales": self._safe_metric(info.get("priceToSalesTrailing12Months")),
+                "price_to_book": self._safe_metric(info.get("priceToBook")),
+                "ev_to_revenue": self._safe_metric(info.get("enterpriseToRevenue")),
                 "ev_ebitda": self._safe_metric(info.get("enterpriseToEbitda")),
+                # Financial Highlights - Profitability
+                "profit_margin": self._safe_metric(info.get("profitMargins")),
+                "return_on_assets": self._safe_metric(info.get("returnOnAssets")),
+                "return_on_equity": self._safe_metric(info.get("returnOnEquity")),
+                # Financial Highlights - Income Statement
+                "revenue_ttm": self._safe_metric(info.get("totalRevenue")),
+                "net_income_ttm": self._safe_metric(info.get("netIncomeToCommon")),
+                "diluted_eps_ttm": self._safe_metric(info.get("trailingEps")),
+                # Financial Highlights - Balance Sheet & Cash Flow
+                "total_cash": self._safe_metric(info.get("totalCash")),
+                "total_debt_to_equity": self._safe_metric(info.get("debtToEquity")),
+                "levered_free_cash_flow": self._safe_metric(info.get("freeCashflow")),
+                # Legacy fields
                 "revenue_growth": self._safe_metric(info.get("revenueGrowth")),
                 "eps_growth": self._safe_metric(info.get("earningsGrowth")),
             }
         except Exception as e:
             logger.error(f"Failed to fetch valuation for {ticker}: {e}")
             return {
+                "market_cap": None,
+                "enterprise_value": None,
+                "pe_trailing": None,
                 "pe_forward": None,
                 "peg": None,
+                "price_to_sales": None,
+                "price_to_book": None,
+                "ev_to_revenue": None,
                 "ev_ebitda": None,
+                "profit_margin": None,
+                "return_on_assets": None,
+                "return_on_equity": None,
+                "revenue_ttm": None,
+                "net_income_ttm": None,
+                "diluted_eps_ttm": None,
+                "total_cash": None,
+                "total_debt_to_equity": None,
+                "levered_free_cash_flow": None,
                 "revenue_growth": None,
                 "eps_growth": None,
             }
@@ -277,12 +316,32 @@ class ValuationFetcher:
                     # Fetch valuation data
                     valuation_data = self.fetch_for_ticker(asset.ticker)
                     
-                    # Save to database
+                    # Save to database with all Yahoo-aligned fields
                     valuation_repo.upsert(
                         asset_id=asset.id,
+                        # Valuation Measures
+                        market_cap=valuation_data.get("market_cap"),
+                        enterprise_value=valuation_data.get("enterprise_value"),
+                        pe_trailing=valuation_data.get("pe_trailing"),
                         pe_forward=valuation_data.get("pe_forward"),
                         peg=valuation_data.get("peg"),
+                        price_to_sales=valuation_data.get("price_to_sales"),
+                        price_to_book=valuation_data.get("price_to_book"),
+                        ev_to_revenue=valuation_data.get("ev_to_revenue"),
                         ev_ebitda=valuation_data.get("ev_ebitda"),
+                        # Financial Highlights - Profitability
+                        profit_margin=valuation_data.get("profit_margin"),
+                        return_on_assets=valuation_data.get("return_on_assets"),
+                        return_on_equity=valuation_data.get("return_on_equity"),
+                        # Financial Highlights - Income Statement
+                        revenue_ttm=valuation_data.get("revenue_ttm"),
+                        net_income_ttm=valuation_data.get("net_income_ttm"),
+                        diluted_eps_ttm=valuation_data.get("diluted_eps_ttm"),
+                        # Financial Highlights - Balance Sheet & Cash Flow
+                        total_cash=valuation_data.get("total_cash"),
+                        total_debt_to_equity=valuation_data.get("total_debt_to_equity"),
+                        levered_free_cash_flow=valuation_data.get("levered_free_cash_flow"),
+                        # Legacy fields
                         revenue_growth=valuation_data.get("revenue_growth"),
                         eps_growth=valuation_data.get("eps_growth"),
                     )

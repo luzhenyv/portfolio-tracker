@@ -1,18 +1,18 @@
 """
-Valuation analytics module.
+Valuation analytics module - Yahoo Finance aligned.
 
-FR-8: Valuation Data Fetching
-- Forward P/E, PEG ratio, EV/EBITDA
-- Revenue growth, Earnings growth
+Provides Yahoo-style "Statistics" page metrics:
+- Valuation Measures: Market Cap, EV, P/E, PEG, P/S, P/B, EV/Rev, EV/EBITDA
+- Financial Highlights: Margins, ROA, ROE, Revenue, Net Income, EPS, Cash, Debt, FCF
 
-FR-9: Missing Data Handling
-- Missing fields stored as NULL
-- No synthetic or estimated values
+FR-8: Valuation Data Fetching from yfinance Ticker.info
+FR-9: Missing fields stored as NULL, no synthetic values
 
 Valuation signals: BUY / WAIT / AVOID (watchlist)
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 
@@ -38,31 +38,98 @@ class MetricBand(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+# Define all Yahoo-aligned metric fields
+YAHOO_VALUATION_FIELDS = [
+    # Valuation Measures
+    "market_cap",
+    "enterprise_value",
+    "pe_trailing",
+    "pe_forward",
+    "peg",
+    "price_to_sales",
+    "price_to_book",
+    "ev_to_revenue",
+    "ev_ebitda",
+    # Financial Highlights - Profitability
+    "profit_margin",
+    "return_on_assets",
+    "return_on_equity",
+    # Financial Highlights - Income Statement
+    "revenue_ttm",
+    "net_income_ttm",
+    "diluted_eps_ttm",
+    # Financial Highlights - Balance Sheet & Cash Flow
+    "total_cash",
+    "total_debt_to_equity",
+    "levered_free_cash_flow",
+]
+
+
 @dataclass
-class ValuationAssessment:
-    """Valuation assessment for an asset."""
+class YahooValuationData:
+    """Yahoo-aligned valuation data for an asset."""
     ticker: str
     asset_id: int
-    pe_forward: float | None
-    peg: float | None
-    ev_ebitda: float | None
-    revenue_growth: float | None
-    eps_growth: float | None
-    pe_band: MetricBand
-    peg_band: MetricBand
-    signal: ValuationSignal
-    reasons: list[str]
+    updated_at: datetime | None = None
+    
+    # Valuation Measures
+    market_cap: float | None = None
+    enterprise_value: float | None = None
+    pe_trailing: float | None = None
+    pe_forward: float | None = None
+    peg: float | None = None
+    price_to_sales: float | None = None
+    price_to_book: float | None = None
+    ev_to_revenue: float | None = None
+    ev_ebitda: float | None = None
+    
+    # Financial Highlights - Profitability
+    profit_margin: float | None = None
+    return_on_assets: float | None = None
+    return_on_equity: float | None = None
+    
+    # Financial Highlights - Income Statement
+    revenue_ttm: float | None = None
+    net_income_ttm: float | None = None
+    diluted_eps_ttm: float | None = None
+    
+    # Financial Highlights - Balance Sheet & Cash Flow
+    total_cash: float | None = None
+    total_debt_to_equity: float | None = None
+    levered_free_cash_flow: float | None = None
+    
     # Override flags - True if user override is applied
+    market_cap_overridden: bool = False
+    enterprise_value_overridden: bool = False
+    pe_trailing_overridden: bool = False
     pe_forward_overridden: bool = False
     peg_overridden: bool = False
+    price_to_sales_overridden: bool = False
+    price_to_book_overridden: bool = False
+    ev_to_revenue_overridden: bool = False
     ev_ebitda_overridden: bool = False
-    revenue_growth_overridden: bool = False
-    eps_growth_overridden: bool = False
+    profit_margin_overridden: bool = False
+    return_on_assets_overridden: bool = False
+    return_on_equity_overridden: bool = False
+    revenue_ttm_overridden: bool = False
+    net_income_ttm_overridden: bool = False
+    diluted_eps_ttm_overridden: bool = False
+    total_cash_overridden: bool = False
+    total_debt_to_equity_overridden: bool = False
+    levered_free_cash_flow_overridden: bool = False
+    
+    # Signal (derived from valuation metrics)
+    pe_band: MetricBand = MetricBand.UNKNOWN
+    peg_band: MetricBand = MetricBand.UNKNOWN
+    signal: ValuationSignal = ValuationSignal.WAIT
+    reasons: list[str] = field(default_factory=list)
 
 
 class ValuationAnalyzer:
     """
     Analyzes valuation metrics and generates signals.
+    
+    Yahoo-aligned output with all Statistics page fields.
     
     FR-11: Rule-Based Logic
     - Decisions are deterministic
@@ -172,63 +239,22 @@ class ValuationAnalyzer:
         
         return ValuationSignal.WAIT, reasons
     
-    def analyze_asset(
+    def _get_effective_value(
         self,
-        ticker: str,
-        asset_id: int,
-        pe_forward: float | None,
-        peg: float | None,
-        ev_ebitda: float | None,
-        revenue_growth: float | None,
-        eps_growth: float | None,
-        pe_forward_overridden: bool = False,
-        peg_overridden: bool = False,
-        ev_ebitda_overridden: bool = False,
-        revenue_growth_overridden: bool = False,
-        eps_growth_overridden: bool = False,
-    ) -> ValuationAssessment:
+        fetched: float | None,
+        override: float | None,
+    ) -> tuple[float | None, bool]:
         """
-        Analyze valuation for a single asset.
+        Get effective value and override flag.
         
-        Args:
-            ticker: Asset ticker symbol.
-            asset_id: Asset database ID.
-            pe_forward: Effective Forward P/E ratio (override if present else fetched).
-            peg: Effective PEG ratio (override if present else fetched).
-            ev_ebitda: Effective EV/EBITDA ratio (override if present else fetched).
-            revenue_growth: Effective revenue growth rate.
-            eps_growth: Effective EPS growth rate.
-            *_overridden: Flags indicating if user override is applied.
-            
         Returns:
-            ValuationAssessment with signal and reasons.
+            Tuple of (effective_value, is_overridden)
         """
-        pe_band = self._score_pe(pe_forward)
-        peg_band = self._score_peg(peg)
-        ev_ebitda_band = self._score_ev_ebitda(ev_ebitda)
-        
-        signal, reasons = self._determine_signal(pe_band, peg_band, ev_ebitda_band)
-        
-        return ValuationAssessment(
-            ticker=ticker,
-            asset_id=asset_id,
-            pe_forward=pe_forward,
-            peg=peg,
-            ev_ebitda=ev_ebitda,
-            revenue_growth=revenue_growth,
-            eps_growth=eps_growth,
-            pe_band=pe_band,
-            peg_band=peg_band,
-            signal=signal,
-            reasons=reasons,
-            pe_forward_overridden=pe_forward_overridden,
-            peg_overridden=peg_overridden,
-            ev_ebitda_overridden=ev_ebitda_overridden,
-            revenue_growth_overridden=revenue_growth_overridden,
-            eps_growth_overridden=eps_growth_overridden,
-        )
+        if override is not None:
+            return override, True
+        return fetched, False
     
-    def run_valuation(self) -> list[ValuationAssessment]:
+    def run_valuation(self) -> list[YahooValuationData]:
         """
         Run valuation analysis for all assets with valuation data.
         
@@ -236,7 +262,7 @@ class ValuationAnalyzer:
         effective_value = override if present else fetched_value
         
         Returns:
-            List of ValuationAssessment for each asset.
+            List of YahooValuationData for each asset.
         """
         db = get_db()
         
@@ -250,96 +276,158 @@ class ValuationAnalyzer:
             asset_ids = [v.asset_id for v in valuations]
             overrides = override_repo.get_by_asset_ids(asset_ids)
         
-        assessments = []
+        results = []
         for v in valuations:
             override = overrides.get(v.asset_id)
             
-            # Compute effective values: override if present else fetched
-            if override and override.pe_forward_override is not None:
-                pe_forward = override.pe_forward_override
-                pe_forward_overridden = True
-            else:
-                pe_forward = v.pe_forward
-                pe_forward_overridden = False
-            
-            if override and override.peg_override is not None:
-                peg = override.peg_override
-                peg_overridden = True
-            else:
-                peg = v.peg
-                peg_overridden = False
-            
-            if override and override.ev_ebitda_override is not None:
-                ev_ebitda = override.ev_ebitda_override
-                ev_ebitda_overridden = True
-            else:
-                ev_ebitda = v.ev_ebitda
-                ev_ebitda_overridden = False
-            
-            if override and override.revenue_growth_override is not None:
-                revenue_growth = override.revenue_growth_override
-                revenue_growth_overridden = True
-            else:
-                revenue_growth = v.revenue_growth
-                revenue_growth_overridden = False
-            
-            if override and override.eps_growth_override is not None:
-                eps_growth = override.eps_growth_override
-                eps_growth_overridden = True
-            else:
-                eps_growth = v.eps_growth
-                eps_growth_overridden = False
-            
-            assessment = self.analyze_asset(
+            # Build effective values for all fields
+            data = YahooValuationData(
                 ticker=v.asset.ticker,
                 asset_id=v.asset_id,
-                pe_forward=pe_forward,
-                peg=peg,
-                ev_ebitda=ev_ebitda,
-                revenue_growth=revenue_growth,
-                eps_growth=eps_growth,
-                pe_forward_overridden=pe_forward_overridden,
-                peg_overridden=peg_overridden,
-                ev_ebitda_overridden=ev_ebitda_overridden,
-                revenue_growth_overridden=revenue_growth_overridden,
-                eps_growth_overridden=eps_growth_overridden,
+                updated_at=v.updated_at,
             )
-            assessments.append(assessment)
+            
+            # Valuation Measures - compute effective values
+            data.market_cap, data.market_cap_overridden = self._get_effective_value(
+                v.market_cap, override.market_cap_override if override else None
+            )
+            data.enterprise_value, data.enterprise_value_overridden = self._get_effective_value(
+                v.enterprise_value, override.enterprise_value_override if override else None
+            )
+            data.pe_trailing, data.pe_trailing_overridden = self._get_effective_value(
+                v.pe_trailing, override.pe_trailing_override if override else None
+            )
+            data.pe_forward, data.pe_forward_overridden = self._get_effective_value(
+                v.pe_forward, override.pe_forward_override if override else None
+            )
+            data.peg, data.peg_overridden = self._get_effective_value(
+                v.peg, override.peg_override if override else None
+            )
+            data.price_to_sales, data.price_to_sales_overridden = self._get_effective_value(
+                v.price_to_sales, override.price_to_sales_override if override else None
+            )
+            data.price_to_book, data.price_to_book_overridden = self._get_effective_value(
+                v.price_to_book, override.price_to_book_override if override else None
+            )
+            data.ev_to_revenue, data.ev_to_revenue_overridden = self._get_effective_value(
+                v.ev_to_revenue, override.ev_to_revenue_override if override else None
+            )
+            data.ev_ebitda, data.ev_ebitda_overridden = self._get_effective_value(
+                v.ev_ebitda, override.ev_ebitda_override if override else None
+            )
+            
+            # Financial Highlights - Profitability
+            data.profit_margin, data.profit_margin_overridden = self._get_effective_value(
+                v.profit_margin, override.profit_margin_override if override else None
+            )
+            data.return_on_assets, data.return_on_assets_overridden = self._get_effective_value(
+                v.return_on_assets, override.return_on_assets_override if override else None
+            )
+            data.return_on_equity, data.return_on_equity_overridden = self._get_effective_value(
+                v.return_on_equity, override.return_on_equity_override if override else None
+            )
+            
+            # Financial Highlights - Income Statement
+            data.revenue_ttm, data.revenue_ttm_overridden = self._get_effective_value(
+                v.revenue_ttm, override.revenue_ttm_override if override else None
+            )
+            data.net_income_ttm, data.net_income_ttm_overridden = self._get_effective_value(
+                v.net_income_ttm, override.net_income_ttm_override if override else None
+            )
+            data.diluted_eps_ttm, data.diluted_eps_ttm_overridden = self._get_effective_value(
+                v.diluted_eps_ttm, override.diluted_eps_ttm_override if override else None
+            )
+            
+            # Financial Highlights - Balance Sheet & Cash Flow
+            data.total_cash, data.total_cash_overridden = self._get_effective_value(
+                v.total_cash, override.total_cash_override if override else None
+            )
+            data.total_debt_to_equity, data.total_debt_to_equity_overridden = self._get_effective_value(
+                v.total_debt_to_equity, override.total_debt_to_equity_override if override else None
+            )
+            data.levered_free_cash_flow, data.levered_free_cash_flow_overridden = self._get_effective_value(
+                v.levered_free_cash_flow, override.levered_free_cash_flow_override if override else None
+            )
+            
+            # Compute bands and signal
+            data.pe_band = self._score_pe(data.pe_forward)
+            data.peg_band = self._score_peg(data.peg)
+            ev_ebitda_band = self._score_ev_ebitda(data.ev_ebitda)
+            
+            data.signal, data.reasons = self._determine_signal(
+                data.pe_band, data.peg_band, ev_ebitda_band
+            )
+            
+            results.append(data)
         
-        return assessments
+        return results
     
     def to_dataframe(self) -> pd.DataFrame:
         """
         Get valuation analysis as DataFrame.
         
         Returns:
-            DataFrame with valuation metrics and signals.
+            DataFrame with Yahoo-aligned valuation metrics and signals.
         """
         assessments = self.run_valuation()
         
         if not assessments:
             return pd.DataFrame()
         
-        return pd.DataFrame([
-            {
+        rows = []
+        for a in assessments:
+            row = {
                 "ticker": a.ticker,
                 "asset_id": a.asset_id,
+                "updated_at": a.updated_at,
+                # Valuation Measures
+                "market_cap": a.market_cap,
+                "enterprise_value": a.enterprise_value,
+                "pe_trailing": a.pe_trailing,
                 "pe_forward": a.pe_forward,
                 "peg": a.peg,
+                "price_to_sales": a.price_to_sales,
+                "price_to_book": a.price_to_book,
+                "ev_to_revenue": a.ev_to_revenue,
                 "ev_ebitda": a.ev_ebitda,
-                "revenue_growth": a.revenue_growth,
-                "eps_growth": a.eps_growth,
+                # Financial Highlights - Profitability
+                "profit_margin": a.profit_margin,
+                "return_on_assets": a.return_on_assets,
+                "return_on_equity": a.return_on_equity,
+                # Financial Highlights - Income Statement
+                "revenue_ttm": a.revenue_ttm,
+                "net_income_ttm": a.net_income_ttm,
+                "diluted_eps_ttm": a.diluted_eps_ttm,
+                # Financial Highlights - Balance Sheet & Cash Flow
+                "total_cash": a.total_cash,
+                "total_debt_to_equity": a.total_debt_to_equity,
+                "levered_free_cash_flow": a.levered_free_cash_flow,
+                # Signal
                 "valuation_action": a.signal.value,
                 "reasons": "; ".join(a.reasons),
                 # Override flags
+                "market_cap_overridden": a.market_cap_overridden,
+                "enterprise_value_overridden": a.enterprise_value_overridden,
+                "pe_trailing_overridden": a.pe_trailing_overridden,
                 "pe_forward_overridden": a.pe_forward_overridden,
                 "peg_overridden": a.peg_overridden,
+                "price_to_sales_overridden": a.price_to_sales_overridden,
+                "price_to_book_overridden": a.price_to_book_overridden,
+                "ev_to_revenue_overridden": a.ev_to_revenue_overridden,
                 "ev_ebitda_overridden": a.ev_ebitda_overridden,
-                "revenue_growth_overridden": a.revenue_growth_overridden,
-                "eps_growth_overridden": a.eps_growth_overridden,
+                "profit_margin_overridden": a.profit_margin_overridden,
+                "return_on_assets_overridden": a.return_on_assets_overridden,
+                "return_on_equity_overridden": a.return_on_equity_overridden,
+                "revenue_ttm_overridden": a.revenue_ttm_overridden,
+                "net_income_ttm_overridden": a.net_income_ttm_overridden,
+                "diluted_eps_ttm_overridden": a.diluted_eps_ttm_overridden,
+                "total_cash_overridden": a.total_cash_overridden,
+                "total_debt_to_equity_overridden": a.total_debt_to_equity_overridden,
+                "levered_free_cash_flow_overridden": a.levered_free_cash_flow_overridden,
             }
-            for a in assessments
-        ])
+            rows.append(row)
+        
+        return pd.DataFrame(rows)
 
 
 def run_valuation() -> pd.DataFrame:
@@ -347,7 +435,7 @@ def run_valuation() -> pd.DataFrame:
     Convenience function for valuation analysis.
     
     Returns:
-        DataFrame with valuation metrics and signals.
+        DataFrame with Yahoo-aligned valuation metrics and signals.
     """
     analyzer = ValuationAnalyzer()
     return analyzer.to_dataframe()
@@ -372,9 +460,10 @@ if __name__ == "__main__":
     if df.empty:
         print("⚠️ No valuation data available")
     else:
-        print("\n📐 Valuation Engine Output")
+        print("\n📐 Yahoo-Aligned Valuation Output")
         display_cols = [
-            "ticker", "pe_forward", "peg", "ev_ebitda",
-            "revenue_growth", "eps_growth", "valuation_action"
+            "ticker", "market_cap", "pe_trailing", "pe_forward", 
+            "peg", "ev_ebitda", "profit_margin", "valuation_action"
         ]
-        print(df[display_cols].to_string(index=False))
+        available_cols = [c for c in display_cols if c in df.columns]
+        print(df[available_cols].to_string(index=False))

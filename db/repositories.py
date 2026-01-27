@@ -390,23 +390,64 @@ class ValuationRepository:
     def upsert(
         self,
         asset_id: int,
+        # Valuation Measures
+        market_cap: float | None = None,
+        enterprise_value: float | None = None,
+        pe_trailing: float | None = None,
         pe_forward: float | None = None,
         peg: float | None = None,
+        price_to_sales: float | None = None,
+        price_to_book: float | None = None,
+        ev_to_revenue: float | None = None,
         ev_ebitda: float | None = None,
+        # Financial Highlights - Profitability
+        profit_margin: float | None = None,
+        return_on_assets: float | None = None,
+        return_on_equity: float | None = None,
+        # Financial Highlights - Income Statement
+        revenue_ttm: float | None = None,
+        net_income_ttm: float | None = None,
+        diluted_eps_ttm: float | None = None,
+        # Financial Highlights - Balance Sheet & Cash Flow
+        total_cash: float | None = None,
+        total_debt_to_equity: float | None = None,
+        levered_free_cash_flow: float | None = None,
+        # Legacy fields
         revenue_growth: float | None = None,
         eps_growth: float | None = None,
     ) -> ValuationMetric:
         """
         Insert or update valuation metrics (FR-8, FR-9).
         
+        Yahoo-aligned fields matching "Statistics" page.
         Missing values are stored as NULL, no synthetic values allowed.
         """
         existing = self.get_by_asset_id(asset_id)
         
         if existing:
+            # Valuation Measures
+            existing.market_cap = market_cap
+            existing.enterprise_value = enterprise_value
+            existing.pe_trailing = pe_trailing
             existing.pe_forward = pe_forward
             existing.peg = peg
+            existing.price_to_sales = price_to_sales
+            existing.price_to_book = price_to_book
+            existing.ev_to_revenue = ev_to_revenue
             existing.ev_ebitda = ev_ebitda
+            # Financial Highlights - Profitability
+            existing.profit_margin = profit_margin
+            existing.return_on_assets = return_on_assets
+            existing.return_on_equity = return_on_equity
+            # Financial Highlights - Income Statement
+            existing.revenue_ttm = revenue_ttm
+            existing.net_income_ttm = net_income_ttm
+            existing.diluted_eps_ttm = diluted_eps_ttm
+            # Financial Highlights - Balance Sheet & Cash Flow
+            existing.total_cash = total_cash
+            existing.total_debt_to_equity = total_debt_to_equity
+            existing.levered_free_cash_flow = levered_free_cash_flow
+            # Legacy fields
             existing.revenue_growth = revenue_growth
             existing.eps_growth = eps_growth
             existing.updated_at = datetime.utcnow()
@@ -415,9 +456,24 @@ class ValuationRepository:
         
         valuation = ValuationMetric(
             asset_id=asset_id,
+            market_cap=market_cap,
+            enterprise_value=enterprise_value,
+            pe_trailing=pe_trailing,
             pe_forward=pe_forward,
             peg=peg,
+            price_to_sales=price_to_sales,
+            price_to_book=price_to_book,
+            ev_to_revenue=ev_to_revenue,
             ev_ebitda=ev_ebitda,
+            profit_margin=profit_margin,
+            return_on_assets=return_on_assets,
+            return_on_equity=return_on_equity,
+            revenue_ttm=revenue_ttm,
+            net_income_ttm=net_income_ttm,
+            diluted_eps_ttm=diluted_eps_ttm,
+            total_cash=total_cash,
+            total_debt_to_equity=total_debt_to_equity,
+            levered_free_cash_flow=levered_free_cash_flow,
             revenue_growth=revenue_growth,
             eps_growth=eps_growth,
         )
@@ -461,9 +517,29 @@ class ValuationOverrideRepository:
     def upsert(
         self,
         asset_id: int,
-        peg_override: float | None = None,
+        # Valuation Measures overrides
+        market_cap_override: float | None = None,
+        enterprise_value_override: float | None = None,
+        pe_trailing_override: float | None = None,
         pe_forward_override: float | None = None,
+        peg_override: float | None = None,
+        price_to_sales_override: float | None = None,
+        price_to_book_override: float | None = None,
+        ev_to_revenue_override: float | None = None,
         ev_ebitda_override: float | None = None,
+        # Financial Highlights - Profitability overrides
+        profit_margin_override: float | None = None,
+        return_on_assets_override: float | None = None,
+        return_on_equity_override: float | None = None,
+        # Financial Highlights - Income Statement overrides
+        revenue_ttm_override: float | None = None,
+        net_income_ttm_override: float | None = None,
+        diluted_eps_ttm_override: float | None = None,
+        # Financial Highlights - Balance Sheet & Cash Flow overrides
+        total_cash_override: float | None = None,
+        total_debt_to_equity_override: float | None = None,
+        levered_free_cash_flow_override: float | None = None,
+        # Legacy fields
         revenue_growth_override: float | None = None,
         eps_growth_override: float | None = None,
     ) -> ValuationMetricOverride:
@@ -471,13 +547,34 @@ class ValuationOverrideRepository:
         Insert or update valuation metric overrides.
         
         NULL values mean no override (use fetched value).
+        Supports all Yahoo-aligned metrics.
         """
         existing = self.get_by_asset_id(asset_id)
         
         if existing:
-            existing.peg_override = peg_override
+            # Valuation Measures overrides
+            existing.market_cap_override = market_cap_override
+            existing.enterprise_value_override = enterprise_value_override
+            existing.pe_trailing_override = pe_trailing_override
             existing.pe_forward_override = pe_forward_override
+            existing.peg_override = peg_override
+            existing.price_to_sales_override = price_to_sales_override
+            existing.price_to_book_override = price_to_book_override
+            existing.ev_to_revenue_override = ev_to_revenue_override
             existing.ev_ebitda_override = ev_ebitda_override
+            # Financial Highlights - Profitability overrides
+            existing.profit_margin_override = profit_margin_override
+            existing.return_on_assets_override = return_on_assets_override
+            existing.return_on_equity_override = return_on_equity_override
+            # Financial Highlights - Income Statement overrides
+            existing.revenue_ttm_override = revenue_ttm_override
+            existing.net_income_ttm_override = net_income_ttm_override
+            existing.diluted_eps_ttm_override = diluted_eps_ttm_override
+            # Financial Highlights - Balance Sheet & Cash Flow overrides
+            existing.total_cash_override = total_cash_override
+            existing.total_debt_to_equity_override = total_debt_to_equity_override
+            existing.levered_free_cash_flow_override = levered_free_cash_flow_override
+            # Legacy fields
             existing.revenue_growth_override = revenue_growth_override
             existing.eps_growth_override = eps_growth_override
             existing.updated_at = datetime.utcnow()
@@ -486,9 +583,24 @@ class ValuationOverrideRepository:
         
         override = ValuationMetricOverride(
             asset_id=asset_id,
-            peg_override=peg_override,
+            market_cap_override=market_cap_override,
+            enterprise_value_override=enterprise_value_override,
+            pe_trailing_override=pe_trailing_override,
             pe_forward_override=pe_forward_override,
+            peg_override=peg_override,
+            price_to_sales_override=price_to_sales_override,
+            price_to_book_override=price_to_book_override,
+            ev_to_revenue_override=ev_to_revenue_override,
             ev_ebitda_override=ev_ebitda_override,
+            profit_margin_override=profit_margin_override,
+            return_on_assets_override=return_on_assets_override,
+            return_on_equity_override=return_on_equity_override,
+            revenue_ttm_override=revenue_ttm_override,
+            net_income_ttm_override=net_income_ttm_override,
+            diluted_eps_ttm_override=diluted_eps_ttm_override,
+            total_cash_override=total_cash_override,
+            total_debt_to_equity_override=total_debt_to_equity_override,
+            levered_free_cash_flow_override=levered_free_cash_flow_override,
             revenue_growth_override=revenue_growth_override,
             eps_growth_override=eps_growth_override,
         )

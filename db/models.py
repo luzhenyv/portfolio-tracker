@@ -272,7 +272,11 @@ class ValuationMetric(Base):
     """
     Valuation metrics auto-fetched from Yahoo Finance.
     
-    FR-8: Auto-fetch Forward P/E, PEG, EV/EBITDA, growth metrics
+    Yahoo-aligned fields matching "Statistics" page:
+    - Valuation Measures: Market Cap, EV, P/E, PEG, P/S, P/B, EV/Rev, EV/EBITDA
+    - Financial Highlights: Margins, ROA, ROE, Revenue, Net Income, EPS, Cash, Debt, FCF
+    
+    FR-8: Auto-fetch via yfinance Ticker.info
     FR-9: NULL for missing data, no synthetic values
     """
     __tablename__ = "valuation_metrics"
@@ -280,11 +284,37 @@ class ValuationMetric(Base):
     asset_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True
     )
+    
+    # Valuation Measures
+    market_cap: Mapped[Optional[float]] = mapped_column(Float)
+    enterprise_value: Mapped[Optional[float]] = mapped_column(Float)
+    pe_trailing: Mapped[Optional[float]] = mapped_column(Float)
     pe_forward: Mapped[Optional[float]] = mapped_column(Float)
     peg: Mapped[Optional[float]] = mapped_column(Float)
+    price_to_sales: Mapped[Optional[float]] = mapped_column(Float)
+    price_to_book: Mapped[Optional[float]] = mapped_column(Float)
+    ev_to_revenue: Mapped[Optional[float]] = mapped_column(Float)
     ev_ebitda: Mapped[Optional[float]] = mapped_column(Float)
+    
+    # Financial Highlights - Profitability
+    profit_margin: Mapped[Optional[float]] = mapped_column(Float)
+    return_on_assets: Mapped[Optional[float]] = mapped_column(Float)
+    return_on_equity: Mapped[Optional[float]] = mapped_column(Float)
+    
+    # Financial Highlights - Income Statement
+    revenue_ttm: Mapped[Optional[float]] = mapped_column(Float)
+    net_income_ttm: Mapped[Optional[float]] = mapped_column(Float)
+    diluted_eps_ttm: Mapped[Optional[float]] = mapped_column(Float)
+    
+    # Financial Highlights - Balance Sheet & Cash Flow
+    total_cash: Mapped[Optional[float]] = mapped_column(Float)
+    total_debt_to_equity: Mapped[Optional[float]] = mapped_column(Float)
+    levered_free_cash_flow: Mapped[Optional[float]] = mapped_column(Float)
+    
+    # Legacy fields (kept for backward compatibility, can be deprecated)
     revenue_growth: Mapped[Optional[float]] = mapped_column(Float)
     eps_growth: Mapped[Optional[float]] = mapped_column(Float)
+    
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc)
     )
@@ -301,7 +331,7 @@ class ValuationMetricOverride(Base):
     User-provided override values for valuation metrics.
     
     Stores manual adjustments that take precedence over auto-fetched values.
-    Supports all metrics: PEG, P/E, EV/EBITDA, growth rates.
+    Supports all Yahoo-aligned metrics with optional *_override fields.
     NULL means no override (use fetched value).
     """
     __tablename__ = "valuation_metric_overrides"
@@ -309,11 +339,37 @@ class ValuationMetricOverride(Base):
     asset_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True
     )
-    peg_override: Mapped[Optional[float]] = mapped_column(Float)
+    
+    # Valuation Measures overrides
+    market_cap_override: Mapped[Optional[float]] = mapped_column(Float)
+    enterprise_value_override: Mapped[Optional[float]] = mapped_column(Float)
+    pe_trailing_override: Mapped[Optional[float]] = mapped_column(Float)
     pe_forward_override: Mapped[Optional[float]] = mapped_column(Float)
+    peg_override: Mapped[Optional[float]] = mapped_column(Float)
+    price_to_sales_override: Mapped[Optional[float]] = mapped_column(Float)
+    price_to_book_override: Mapped[Optional[float]] = mapped_column(Float)
+    ev_to_revenue_override: Mapped[Optional[float]] = mapped_column(Float)
     ev_ebitda_override: Mapped[Optional[float]] = mapped_column(Float)
+    
+    # Financial Highlights - Profitability overrides
+    profit_margin_override: Mapped[Optional[float]] = mapped_column(Float)
+    return_on_assets_override: Mapped[Optional[float]] = mapped_column(Float)
+    return_on_equity_override: Mapped[Optional[float]] = mapped_column(Float)
+    
+    # Financial Highlights - Income Statement overrides
+    revenue_ttm_override: Mapped[Optional[float]] = mapped_column(Float)
+    net_income_ttm_override: Mapped[Optional[float]] = mapped_column(Float)
+    diluted_eps_ttm_override: Mapped[Optional[float]] = mapped_column(Float)
+    
+    # Financial Highlights - Balance Sheet & Cash Flow overrides
+    total_cash_override: Mapped[Optional[float]] = mapped_column(Float)
+    total_debt_to_equity_override: Mapped[Optional[float]] = mapped_column(Float)
+    levered_free_cash_flow_override: Mapped[Optional[float]] = mapped_column(Float)
+    
+    # Legacy fields (kept for backward compatibility)
     revenue_growth_override: Mapped[Optional[float]] = mapped_column(Float)
     eps_growth_override: Mapped[Optional[float]] = mapped_column(Float)
+    
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.now(timezone.utc), nullable=False
     )
@@ -325,7 +381,7 @@ class ValuationMetricOverride(Base):
     asset: Mapped["Asset"] = relationship("Asset", back_populates="valuation_override")
 
     def __repr__(self) -> str:
-        return f"<ValuationMetricOverride(asset_id={self.asset_id}, peg_override={self.peg_override})>"
+        return f"<ValuationMetricOverride(asset_id={self.asset_id})>"
 
 
 class WatchlistTarget(Base):

@@ -23,9 +23,10 @@ from analytics.risk import (
 )
 from analytics.valuation import (
     ValuationAnalyzer,
-    ValuationAssessment,
+    YahooValuationData,
     ValuationSignal,
     MetricBand,
+    YAHOO_VALUATION_FIELDS,
     run_valuation,
     load_valuation_inputs,
 )
@@ -54,9 +55,10 @@ __all__ = [
     "compute_risk_metrics",
     # Valuation
     "ValuationAnalyzer",
-    "ValuationAssessment",
+    "YahooValuationData",
     "ValuationSignal",
     "MetricBand",
+    "YAHOO_VALUATION_FIELDS",
     "run_valuation",
     "load_valuation_inputs",
     # Performance

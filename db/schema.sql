@@ -71,9 +71,29 @@ CREATE TABLE IF NOT EXISTS investment_thesis (
 
 CREATE TABLE IF NOT EXISTS valuation_metrics (
     asset_id INTEGER PRIMARY KEY,
+    -- Valuation Measures
+    market_cap REAL,
+    enterprise_value REAL,
+    pe_trailing REAL,
     pe_forward REAL,
     peg REAL,
+    price_to_sales REAL,
+    price_to_book REAL,
+    ev_to_revenue REAL,
     ev_ebitda REAL,
+    -- Financial Highlights - Profitability
+    profit_margin REAL,
+    return_on_assets REAL,
+    return_on_equity REAL,
+    -- Financial Highlights - Income Statement
+    revenue_ttm REAL,
+    net_income_ttm REAL,
+    diluted_eps_ttm REAL,
+    -- Financial Highlights - Balance Sheet & Cash Flow
+    total_cash REAL,
+    total_debt_to_equity REAL,
+    levered_free_cash_flow REAL,
+    -- Legacy fields
     revenue_growth REAL,
     eps_growth REAL,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -128,9 +148,29 @@ ON cash_transactions(asset_id);
 
 CREATE TABLE IF NOT EXISTS valuation_metric_overrides (
     asset_id INTEGER PRIMARY KEY,
-    peg_override REAL,
+    -- Valuation Measures overrides
+    market_cap_override REAL,
+    enterprise_value_override REAL,
+    pe_trailing_override REAL,
     pe_forward_override REAL,
+    peg_override REAL,
+    price_to_sales_override REAL,
+    price_to_book_override REAL,
+    ev_to_revenue_override REAL,
     ev_ebitda_override REAL,
+    -- Financial Highlights - Profitability overrides
+    profit_margin_override REAL,
+    return_on_assets_override REAL,
+    return_on_equity_override REAL,
+    -- Financial Highlights - Income Statement overrides
+    revenue_ttm_override REAL,
+    net_income_ttm_override REAL,
+    diluted_eps_ttm_override REAL,
+    -- Financial Highlights - Balance Sheet & Cash Flow overrides
+    total_cash_override REAL,
+    total_debt_to_equity_override REAL,
+    levered_free_cash_flow_override REAL,
+    -- Legacy fields
     revenue_growth_override REAL,
     eps_growth_override REAL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,

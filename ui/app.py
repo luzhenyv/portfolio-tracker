@@ -867,12 +867,13 @@ def render_admin_page():
 
 def render_watchlist_page():
     """
-    Render Watchlist & Valuation page with editable metrics.
+    Render Watchlist & Valuation page with Yahoo-style metrics.
 
     Shows:
-    - Valuation metrics for all assets
+    - Yahoo-aligned Valuation Measures table
+    - Yahoo-aligned Financial Highlights table
     - BUY/WAIT/AVOID signals
-    - Editable PEG column for user overrides
+    - All fields are editable with manual overrides saved to DB
     """
     st.header("👀 Watchlist & Valuation")
 
@@ -887,6 +888,16 @@ def render_watchlist_page():
         st.caption("Run the valuation fetcher to populate this view.")
         return
 
+    # Show "As of" date from the most recent updated_at
+    if "updated_at" in valuation_df.columns:
+        latest_update = valuation_df["updated_at"].dropna().max()
+        if pd.notna(latest_update):
+            if hasattr(latest_update, 'strftime'):
+                as_of_date = latest_update.strftime("%m/%d/%Y")
+            else:
+                as_of_date = str(latest_update)[:10]
+            st.caption(f"📅 Data as of: {as_of_date}")
+
     # Store original for comparison
     if "watchlist_original_df" not in st.session_state:
         st.session_state.watchlist_original_df = valuation_df.copy()
@@ -897,130 +908,238 @@ def render_watchlist_page():
     if current_ids != original_ids:
         st.session_state.watchlist_original_df = valuation_df.copy()
 
-    # Prepare editable dataframe - keep numeric values for editing
-    edit_df = valuation_df.copy()
+    # ====== VALUATION MEASURES TABLE ======
+    st.subheader("📊 Valuation Measures")
     
-    # Add display columns for override indicators
-    edit_df["peg_display"] = edit_df.apply(
-        lambda row: f"{row['peg']:.2f} ✏️" if pd.notna(row['peg']) and row.get('peg_overridden', False)
-        else (f"{row['peg']:.2f}" if pd.notna(row['peg']) else None),
-        axis=1
-    )
+    valuation_measures_cols = [
+        "ticker", "asset_id", "market_cap", "enterprise_value", 
+        "pe_trailing", "pe_forward", "peg", "price_to_sales", 
+        "price_to_book", "ev_to_revenue", "ev_ebitda", "valuation_action"
+    ]
     
-    # Format non-editable numeric columns for display
-    display_df = valuation_df.copy()
+    # Create editor dataframe for valuation measures
+    vm_df = valuation_df[["ticker", "asset_id"]].copy()
     
-    for col in ["pe_forward", "ev_ebitda"]:
-        if col in display_df.columns:
-            display_df[f"{col}_fmt"] = display_df[col].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "—")
+    # Add valuation measure columns with formatting helpers
+    for col in ["market_cap", "enterprise_value", "pe_trailing", "pe_forward", 
+                "peg", "price_to_sales", "price_to_book", "ev_to_revenue", "ev_ebitda"]:
+        if col in valuation_df.columns:
+            vm_df[col] = valuation_df[col]
+        else:
+            vm_df[col] = None
+    
+    vm_df["valuation_action"] = valuation_df["valuation_action"]
+    
+    # Add override flags
+    for col in ["market_cap", "enterprise_value", "pe_trailing", "pe_forward", 
+                "peg", "price_to_sales", "price_to_book", "ev_to_revenue", "ev_ebitda"]:
+        flag_col = f"{col}_overridden"
+        if flag_col in valuation_df.columns:
+            vm_df[flag_col] = valuation_df[flag_col]
+        else:
+            vm_df[flag_col] = False
 
-    for col in ["revenue_growth", "eps_growth"]:
-        if col in display_df.columns:
-            display_df[f"{col}_fmt"] = display_df[col].apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—")
-
-    # Create the editable dataframe with only the columns we need
-    # Multiply growth values by 100 for percentage display (0.116 -> 11.6)
-    editor_df = pd.DataFrame({
-        "ticker": valuation_df["ticker"],
-        "asset_id": valuation_df["asset_id"],
-        "pe_forward": valuation_df["pe_forward"],
-        "peg": valuation_df["peg"],
-        "ev_ebitda": valuation_df["ev_ebitda"],
-        "revenue_growth": valuation_df["revenue_growth"].apply(lambda x: x * 100 if pd.notna(x) else None),
-        "eps_growth": valuation_df["eps_growth"].apply(lambda x: x * 100 if pd.notna(x) else None),
-        "valuation_action": valuation_df["valuation_action"],
-        "peg_overridden": valuation_df.get("peg_overridden", False),
-    })
-
-    # Use data_editor with editable PEG column
-    edited_df = st.data_editor(
-        editor_df,
+    edited_vm_df = st.data_editor(
+        vm_df,
         hide_index=True,
-        disabled=["ticker", "asset_id", "pe_forward", "ev_ebitda", "revenue_growth", "eps_growth", "valuation_action", "peg_overridden"],
+        disabled=["ticker", "asset_id", "valuation_action"] + [f"{c}_overridden" for c in ["market_cap", "enterprise_value", "pe_trailing", "pe_forward", "peg", "price_to_sales", "price_to_book", "ev_to_revenue", "ev_ebitda"]],
         column_config={
             "ticker": st.column_config.TextColumn("Ticker", width="small"),
-            "asset_id": None,  # Hide asset_id column
-            "pe_forward": st.column_config.NumberColumn(
-                "Fwd P/E",
-                width="small",
-                format="%.1f",
-                help="Forward Price-to-Earnings ratio: market price / expected next-year EPS (lower = cheaper)"
+            "asset_id": None,  # Hidden
+            "market_cap": st.column_config.NumberColumn(
+                "Market Cap",
+                width="medium",
+                format="%.2e",
+                help="Market Capitalization = Share Price × Shares Outstanding"
             ),
-            "peg": st.column_config.NumberColumn(
-                "PEG",
+            "enterprise_value": st.column_config.NumberColumn(
+                "Enterprise Value",
+                width="medium",
+                format="%.2e",
+                help="EV = Market Cap + Debt - Cash"
+            ),
+            "pe_trailing": st.column_config.NumberColumn(
+                "Trailing P/E",
                 width="small",
                 format="%.2f",
-                help="Price/Earnings-to-Growth ratio: (P/E) / EPS growth % (< 1 = undervalued, > 2 = overvalued). Edit to override."
+                help="Trailing Price-to-Earnings: market price / TTM EPS"
+            ),
+            "pe_forward": st.column_config.NumberColumn(
+                "Forward P/E",
+                width="small",
+                format="%.2f",
+                help="Forward Price-to-Earnings: market price / estimated next-year EPS"
+            ),
+            "peg": st.column_config.NumberColumn(
+                "PEG Ratio",
+                width="small",
+                format="%.2f",
+                help="P/E-to-Growth: (P/E) / EPS growth % (< 1 = undervalued)"
+            ),
+            "price_to_sales": st.column_config.NumberColumn(
+                "Price/Sales",
+                width="small",
+                format="%.2f",
+                help="Price-to-Sales ratio (trailing 12 months)"
+            ),
+            "price_to_book": st.column_config.NumberColumn(
+                "Price/Book",
+                width="small",
+                format="%.2f",
+                help="Price-to-Book ratio (most recent quarter)"
+            ),
+            "ev_to_revenue": st.column_config.NumberColumn(
+                "EV/Revenue",
+                width="small",
+                format="%.2f",
+                help="Enterprise Value / Revenue"
             ),
             "ev_ebitda": st.column_config.NumberColumn(
                 "EV/EBITDA",
                 width="small",
-                format="%.1f",
-                help="Enterprise Value / EBITDA multiple: measures valuation relative to operating earnings"
-            ),
-            "revenue_growth": st.column_config.NumberColumn(
-                "Rev Growth %",
-                width="small",
-                format="%.1f%%",
-                help="Year-over-year revenue growth rate (trailing or projected)"
-            ),
-            "eps_growth": st.column_config.NumberColumn(
-                "EPS Growth %",
-                width="small",
-                format="%.1f%%",
-                help="Year-over-year earnings per share growth rate"
+                format="%.2f",
+                help="Enterprise Value / EBITDA"
             ),
             "valuation_action": st.column_config.TextColumn(
                 "Signal",
                 width="small",
-                help="BUY = attractive valuation | WAIT = mixed signals | AVOID = overvalued"
+                help="BUY = attractive valuation | WAIT = mixed | AVOID = overvalued"
             ),
-            "peg_overridden": st.column_config.CheckboxColumn(
-                "✏️",
-                width="small",
-                help="Checked if user override is applied",
-            ),
+            # Hide override flags
+            **{f"{c}_overridden": None for c in ["market_cap", "enterprise_value", "pe_trailing", "pe_forward", "peg", "price_to_sales", "price_to_book", "ev_to_revenue", "ev_ebitda"]},
         },
-        key="watchlist_editor",
+        key="valuation_measures_editor",
     )
 
-    # Check for changes and show save button
-    original_df = st.session_state.watchlist_original_df
-    changes = []
+    st.divider()
     
-    for idx, row in edited_df.iterrows():
-        asset_id = row["asset_id"]
-        new_peg = row["peg"]
-        
-        # Find original value
-        orig_row = original_df[original_df["asset_id"] == asset_id]
-        if not orig_row.empty:
-            orig_peg = orig_row.iloc[0]["peg"]
-            
-            # Compare values (handle NaN)
-            if pd.isna(new_peg) and pd.isna(orig_peg):
-                continue
-            if pd.notna(new_peg) and pd.notna(orig_peg) and abs(new_peg - orig_peg) < 0.001:
-                continue
-            if pd.isna(new_peg) != pd.isna(orig_peg) or (pd.notna(new_peg) and abs(new_peg - orig_peg) >= 0.001):
-                changes.append({
-                    "asset_id": asset_id,
-                    "ticker": row["ticker"],
-                    "old_peg": orig_peg,
-                    "new_peg": new_peg,
-                })
+    # ====== FINANCIAL HIGHLIGHTS TABLE ======
+    st.subheader("💰 Financial Highlights")
+    
+    # Create editor dataframe for financial highlights
+    fh_df = valuation_df[["ticker", "asset_id"]].copy()
+    
+    # Profitability metrics (stored as decimals, display as %)
+    for col in ["profit_margin", "return_on_assets", "return_on_equity"]:
+        if col in valuation_df.columns:
+            fh_df[col] = valuation_df[col].apply(lambda x: x * 100 if pd.notna(x) else None)
+        else:
+            fh_df[col] = None
+    
+    # Income statement metrics (large numbers)
+    for col in ["revenue_ttm", "net_income_ttm", "diluted_eps_ttm"]:
+        if col in valuation_df.columns:
+            fh_df[col] = valuation_df[col]
+        else:
+            fh_df[col] = None
+    
+    # Balance sheet & cash flow
+    for col in ["total_cash", "total_debt_to_equity", "levered_free_cash_flow"]:
+        if col in valuation_df.columns:
+            if col == "total_debt_to_equity":
+                # D/E is already a percentage in yfinance
+                fh_df[col] = valuation_df[col]
+            else:
+                fh_df[col] = valuation_df[col]
+        else:
+            fh_df[col] = None
+    
+    # Add override flags
+    for col in ["profit_margin", "return_on_assets", "return_on_equity", 
+                "revenue_ttm", "net_income_ttm", "diluted_eps_ttm",
+                "total_cash", "total_debt_to_equity", "levered_free_cash_flow"]:
+        flag_col = f"{col}_overridden"
+        if flag_col in valuation_df.columns:
+            fh_df[flag_col] = valuation_df[flag_col]
+        else:
+            fh_df[flag_col] = False
+
+    edited_fh_df = st.data_editor(
+        fh_df,
+        hide_index=True,
+        disabled=["ticker", "asset_id"] + [f"{c}_overridden" for c in ["profit_margin", "return_on_assets", "return_on_equity", "revenue_ttm", "net_income_ttm", "diluted_eps_ttm", "total_cash", "total_debt_to_equity", "levered_free_cash_flow"]],
+        column_config={
+            "ticker": st.column_config.TextColumn("Ticker", width="small"),
+            "asset_id": None,  # Hidden
+            # Profitability
+            "profit_margin": st.column_config.NumberColumn(
+                "Profit Margin",
+                width="small",
+                format="%.2f%%",
+                help="Net Income / Revenue (trailing 12 months)"
+            ),
+            "return_on_assets": st.column_config.NumberColumn(
+                "ROA (ttm)",
+                width="small",
+                format="%.2f%%",
+                help="Return on Assets (trailing 12 months)"
+            ),
+            "return_on_equity": st.column_config.NumberColumn(
+                "ROE (ttm)",
+                width="small",
+                format="%.2f%%",
+                help="Return on Equity (trailing 12 months)"
+            ),
+            # Income Statement
+            "revenue_ttm": st.column_config.NumberColumn(
+                "Revenue (ttm)",
+                width="medium",
+                format="%.2e",
+                help="Total Revenue (trailing 12 months)"
+            ),
+            "net_income_ttm": st.column_config.NumberColumn(
+                "Net Income (ttm)",
+                width="medium",
+                format="%.2e",
+                help="Net Income Available to Common (trailing 12 months)"
+            ),
+            "diluted_eps_ttm": st.column_config.NumberColumn(
+                "Diluted EPS",
+                width="small",
+                format="%.2f",
+                help="Diluted Earnings Per Share (trailing 12 months)"
+            ),
+            # Balance Sheet & Cash Flow
+            "total_cash": st.column_config.NumberColumn(
+                "Total Cash (mrq)",
+                width="medium",
+                format="%.2e",
+                help="Total Cash (most recent quarter)"
+            ),
+            "total_debt_to_equity": st.column_config.NumberColumn(
+                "Debt/Equity (mrq)",
+                width="small",
+                format="%.2f%%",
+                help="Total Debt / Equity (most recent quarter)"
+            ),
+            "levered_free_cash_flow": st.column_config.NumberColumn(
+                "Levered FCF (ttm)",
+                width="medium",
+                format="%.2e",
+                help="Levered Free Cash Flow (trailing 12 months)"
+            ),
+            # Hide override flags
+            **{f"{c}_overridden": None for c in ["profit_margin", "return_on_assets", "return_on_equity", "revenue_ttm", "net_income_ttm", "diluted_eps_ttm", "total_cash", "total_debt_to_equity", "levered_free_cash_flow"]},
+        },
+        key="financial_highlights_editor",
+    )
+
+    # ====== DETECT AND SAVE CHANGES ======
+    original_df = st.session_state.watchlist_original_df
+    changes = _detect_valuation_changes(edited_vm_df, edited_fh_df, original_df, valuation_df)
 
     if changes:
         st.divider()
         st.subheader("📝 Pending Changes")
         
         for change in changes:
-            old_val = f"{change['old_peg']:.2f}" if pd.notna(change['old_peg']) else "—"
-            new_val = f"{change['new_peg']:.2f}" if pd.notna(change['new_peg']) else "—"
-            st.write(f"**{change['ticker']}**: PEG {old_val} → {new_val}")
+            field_label = change["field"].replace("_", " ").title()
+            old_val = _format_change_value(change["old_value"], change["field"])
+            new_val = _format_change_value(change["new_value"], change["field"])
+            st.write(f"**{change['ticker']}** — {field_label}: {old_val} → {new_val}")
         
         if st.button("💾 Save Changes", type="primary"):
-            _save_peg_overrides(changes)
+            _save_valuation_overrides(changes)
             st.success("✅ Overrides saved successfully!")
             # Clear the original to force refresh
             del st.session_state.watchlist_original_df
@@ -1035,13 +1154,153 @@ def render_watchlist_page():
     col3.markdown("🔴 **AVOID** — Multiple metrics suggest overvaluation")
 
     st.caption(
-        "💡 Edit the PEG column to override auto-fetched values. "
-        "Overrides are indicated by ✏️ checkbox. Changes require saving."
+        "💡 Edit any numeric cell to override auto-fetched values. "
+        "Overrides are saved and take precedence over yfinance data. "
+        "Missing data is displayed as empty cells; you can fill them manually."
     )
 
 
-def _save_peg_overrides(changes: list[dict]):
-    """Save PEG override changes to database."""
+def _format_change_value(value: float | None, field: str) -> str:
+    """Format a change value for display."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return "—"
+    
+    # Percentage fields
+    if field in ["profit_margin", "return_on_assets", "return_on_equity"]:
+        return f"{value:.2f}%"
+    
+    # Large number fields
+    if field in ["market_cap", "enterprise_value", "revenue_ttm", "net_income_ttm", 
+                 "total_cash", "levered_free_cash_flow"]:
+        return _format_large_number(value)
+    
+    # Ratio fields
+    return f"{value:.2f}"
+
+
+def _format_large_number(value: float | None) -> str:
+    """Format large numbers in B/T notation like Yahoo Finance."""
+    if value is None or pd.isna(value):
+        return "—"
+    
+    abs_val = abs(value)
+    sign = "-" if value < 0 else ""
+    
+    if abs_val >= 1e12:
+        return f"{sign}{abs_val / 1e12:.2f}T"
+    elif abs_val >= 1e9:
+        return f"{sign}{abs_val / 1e9:.2f}B"
+    elif abs_val >= 1e6:
+        return f"{sign}{abs_val / 1e6:.2f}M"
+    elif abs_val >= 1e3:
+        return f"{sign}{abs_val / 1e3:.2f}K"
+    else:
+        return f"{sign}{abs_val:.2f}"
+
+
+def _detect_valuation_changes(
+    edited_vm_df: pd.DataFrame, 
+    edited_fh_df: pd.DataFrame, 
+    original_df: pd.DataFrame,
+    valuation_df: pd.DataFrame,
+) -> list[dict]:
+    """Detect changes between edited and original dataframes."""
+    changes = []
+    
+    # Valuation measures fields
+    vm_fields = ["market_cap", "enterprise_value", "pe_trailing", "pe_forward", 
+                 "peg", "price_to_sales", "price_to_book", "ev_to_revenue", "ev_ebitda"]
+    
+    # Financial highlights fields (note: percentages were multiplied by 100 for display)
+    fh_percentage_fields = ["profit_margin", "return_on_assets", "return_on_equity"]
+    fh_other_fields = ["revenue_ttm", "net_income_ttm", "diluted_eps_ttm",
+                       "total_cash", "total_debt_to_equity", "levered_free_cash_flow"]
+    
+    for idx, row in edited_vm_df.iterrows():
+        asset_id = row["asset_id"]
+        ticker = row["ticker"]
+        
+        # Find original values
+        orig_row = original_df[original_df["asset_id"] == asset_id]
+        if orig_row.empty:
+            continue
+        
+        for field in vm_fields:
+            if field not in edited_vm_df.columns or field not in original_df.columns:
+                continue
+                
+            new_val = row[field]
+            orig_val = orig_row.iloc[0][field]
+            
+            if _values_differ(new_val, orig_val):
+                changes.append({
+                    "asset_id": asset_id,
+                    "ticker": ticker,
+                    "field": field,
+                    "old_value": orig_val,
+                    "new_value": new_val,
+                })
+    
+    for idx, row in edited_fh_df.iterrows():
+        asset_id = row["asset_id"]
+        ticker = row["ticker"]
+        
+        orig_row = original_df[original_df["asset_id"] == asset_id]
+        if orig_row.empty:
+            continue
+        
+        # Percentage fields (need to convert back from display %)
+        for field in fh_percentage_fields:
+            if field not in edited_fh_df.columns or field not in original_df.columns:
+                continue
+            
+            new_val_display = row[field]
+            # Convert back to decimal
+            new_val = new_val_display / 100 if pd.notna(new_val_display) else None
+            orig_val = orig_row.iloc[0][field]
+            
+            if _values_differ(new_val, orig_val):
+                changes.append({
+                    "asset_id": asset_id,
+                    "ticker": ticker,
+                    "field": field,
+                    "old_value": orig_val * 100 if pd.notna(orig_val) else None,
+                    "new_value": new_val_display,
+                })
+        
+        # Other fields
+        for field in fh_other_fields:
+            if field not in edited_fh_df.columns or field not in original_df.columns:
+                continue
+            
+            new_val = row[field]
+            orig_val = orig_row.iloc[0][field]
+            
+            if _values_differ(new_val, orig_val):
+                changes.append({
+                    "asset_id": asset_id,
+                    "ticker": ticker,
+                    "field": field,
+                    "old_value": orig_val,
+                    "new_value": new_val,
+                })
+    
+    return changes
+
+
+def _values_differ(new_val, orig_val, tolerance: float = 0.001) -> bool:
+    """Check if two values differ (handling NaN)."""
+    if pd.isna(new_val) and pd.isna(orig_val):
+        return False
+    if pd.isna(new_val) != pd.isna(orig_val):
+        return True
+    if pd.notna(new_val) and pd.notna(orig_val):
+        return abs(new_val - orig_val) >= tolerance
+    return False
+
+
+def _save_valuation_overrides(changes: list[dict]):
+    """Save valuation override changes to database."""
     from db import get_db
     from db.repositories import ValuationOverrideRepository
     
@@ -1049,27 +1308,47 @@ def _save_peg_overrides(changes: list[dict]):
     with db.session() as session:
         override_repo = ValuationOverrideRepository(session)
         
+        # Group changes by asset_id
+        changes_by_asset: dict[int, dict] = {}
         for change in changes:
             asset_id = change["asset_id"]
-            new_peg = change["new_peg"]
+            if asset_id not in changes_by_asset:
+                changes_by_asset[asset_id] = {}
             
+            field = change["field"]
+            new_value = change["new_value"]
+            
+            # Convert percentage display values back to decimals for storage
+            if field in ["profit_margin", "return_on_assets", "return_on_equity"]:
+                new_value = new_value / 100 if pd.notna(new_value) else None
+            
+            changes_by_asset[asset_id][f"{field}_override"] = new_value if pd.notna(new_value) else None
+        
+        for asset_id, field_updates in changes_by_asset.items():
             # Get existing override to preserve other fields
             existing = override_repo.get_by_asset_id(asset_id)
             
-            if existing:
-                override_repo.upsert(
-                    asset_id=asset_id,
-                    peg_override=new_peg if pd.notna(new_peg) else None,
-                    pe_forward_override=existing.pe_forward_override,
-                    ev_ebitda_override=existing.ev_ebitda_override,
-                    revenue_growth_override=existing.revenue_growth_override,
-                    eps_growth_override=existing.eps_growth_override,
-                )
-            else:
-                override_repo.upsert(
-                    asset_id=asset_id,
-                    peg_override=new_peg if pd.notna(new_peg) else None,
-                )
+            # Build kwargs with existing values
+            kwargs = {"asset_id": asset_id}
+            
+            override_fields = [
+                "market_cap_override", "enterprise_value_override", "pe_trailing_override",
+                "pe_forward_override", "peg_override", "price_to_sales_override",
+                "price_to_book_override", "ev_to_revenue_override", "ev_ebitda_override",
+                "profit_margin_override", "return_on_assets_override", "return_on_equity_override",
+                "revenue_ttm_override", "net_income_ttm_override", "diluted_eps_ttm_override",
+                "total_cash_override", "total_debt_to_equity_override", "levered_free_cash_flow_override",
+            ]
+            
+            for field in override_fields:
+                if field in field_updates:
+                    kwargs[field] = field_updates[field]
+                elif existing and hasattr(existing, field):
+                    kwargs[field] = getattr(existing, field)
+                else:
+                    kwargs[field] = None
+            
+            override_repo.upsert(**kwargs)
         
         session.commit()
 
