@@ -290,8 +290,34 @@ class PortfolioAnalyzer:
         """
         positions, summary = self.compute_portfolio()
         
-        df = pd.DataFrame([
-            {
+        # Get 1-day price changes for today unrealized P&L calculation
+        db = get_db()
+        with db.session() as session:
+            price_repo = PriceRepository(session)
+            asset_ids = [p.asset_id for p in positions]
+            price_data = price_repo.get_latest_and_prior_prices_for_assets(asset_ids)
+        
+        # Calculate 1-day P&L per position
+        today_unrealized_pnl = 0.0
+        latest_price_date = None
+        
+        df_records = []
+        for p in positions:
+            asset_prices = price_data.get(p.asset_id, {})
+            latest_close = asset_prices.get("latest_close")
+            prior_close = asset_prices.get("prior_close")
+            
+            # Track latest date for display
+            if asset_prices.get("latest_date") and not latest_price_date:
+                latest_price_date = asset_prices.get("latest_date")
+            
+            # 1-day P&L = (latest_close - prior_close) * net_shares
+            position_1d_pnl = 0.0
+            if latest_close is not None and prior_close is not None:
+                position_1d_pnl = (latest_close - prior_close) * p.net_shares
+                today_unrealized_pnl += position_1d_pnl
+            
+            df_records.append({
                 "ticker": p.ticker,
                 "asset_id": p.asset_id,
                 "asset_type": p.asset_type,
@@ -299,45 +325,61 @@ class PortfolioAnalyzer:
                 "short_shares": p.short_shares,
                 "net_shares": p.net_shares,
                 "close": p.current_price,
+                "prior_close": prior_close,
                 "long_mv": p.long_market_value,
                 "short_mv": p.short_market_value,
                 "gross": p.gross_exposure,
                 "net": p.net_exposure,
                 "pnl": p.total_unrealized_pnl,
+                "pnl_1d": position_1d_pnl,
                 "realized_pnl": p.realized_pnl,
                 "gross_weight": p.gross_weight,
                 "net_weight": p.net_weight,
                 "net_invested": p.net_invested,
                 "net_invested_avg_cost": p.net_invested_avg_cost,
                 "net_invested_pnl": p.net_invested_pnl,
-            }
-            for p in positions
-        ])
+            })
+        
+        df = pd.DataFrame(df_records)
         
         # Calculate total cost and market value using net invested
         # Net invested represents remaining capital after realized gains/losses
         total_cost = summary.total_net_invested
-        total_market_value = summary.long_market_value - summary.short_market_value  # Net value
+        holdings_market_value = summary.long_market_value - summary.short_market_value  # Net value
         # P&L percentage based on net invested capital
-        total_pnl_pct = (summary.total_net_invested_pnl / total_cost) if total_cost > 0 else 0.0
+        holdings_pnl_pct = (summary.total_net_invested_pnl / total_cost) if total_cost > 0 else 0.0
+        today_pnl_pct = (today_unrealized_pnl / holdings_market_value) if holdings_market_value > 0 else 0.0
         
         summary_dict = {
+            # Long/Short breakdown
             "long_cost": summary.long_total_cost,
             "long_mv": summary.long_market_value,
             "long_pnl": summary.long_unrealized_pnl,
             "short_cost": summary.short_total_cost,
             "short_mv": summary.short_market_value,
             "short_pnl": summary.short_unrealized_pnl,
+            # Exposure metrics
             "gross_exposure": summary.gross_exposure,
             "net_exposure": summary.net_exposure,
+            # P&L breakdown
             "total_unrealized_pnl": summary.total_unrealized_pnl,
             "total_realized_pnl": summary.total_realized_pnl,
             "total_pnl": summary.total_pnl,
-            # Additional keys for UI compatibility - using net invested basis
+            # Explicit keys for UI (Portfolio Snapshot section)
+            "holdings_market_value": holdings_market_value,
+            "holdings_unrealized_pnl": summary.total_net_invested_pnl,
+            "holdings_pnl_pct": holdings_pnl_pct,
+            # 1-day P&L (price-move based)
+            "today_unrealized_pnl": today_unrealized_pnl,
+            "today_pnl_pct": today_pnl_pct,
+            "latest_price_date": latest_price_date,
+            # Position count
+            "position_count": summary.position_count,
+            # Legacy keys for backward compatibility
             "total_cost": total_cost,  # Net invested capital
-            "total_market_value": total_market_value,
-            "total_pnl": summary.total_net_invested_pnl,  # P&L on remaining capital
-            "total_pnl_pct": total_pnl_pct,
+            "total_market_value": holdings_market_value,
+            "total_pnl": summary.total_net_invested_pnl,
+            "total_pnl_pct": holdings_pnl_pct,
         }
         
         return df, summary_dict

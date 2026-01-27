@@ -130,35 +130,77 @@ def render_overview_page():
         st.error(f"Error loading portfolio data: {e}")
         return
 
-    # Portfolio Value Metrics
-    st.subheader("💰 Portfolio Value")
+    # Get cash balance for NAV calculation
+    cash_balance = get_cash_balance()
+    total_nav = summary["holdings_market_value"] + cash_balance
+
+    # Portfolio Snapshot section
+    st.subheader("📸 Portfolio Snapshot")
+    
+    # Show data freshness
+    if summary.get("latest_price_date"):
+        st.caption(f"📅 As of latest close: {summary['latest_price_date']}")
+
+    # Row 1: NAV, Holdings, Cash, Positions
     col1, col2, col3, col4 = st.columns(4)
 
     col1.metric(
-        "Total Cost",
-        format_currency(summary["total_cost"]),
+        "Total NAV",
+        format_currency(total_nav),
+        help="Net Asset Value = Holdings Market Value + Cash",
     )
     col2.metric(
-        "Market Value",
-        format_currency(summary["total_market_value"]),
+        "Holdings",
+        format_currency(summary["holdings_market_value"]),
+        help="Net market value of all positions (long − short exposure)",
     )
     col3.metric(
-        "Unrealized P&L",
-        format_currency(summary["total_pnl"]),
-        format_percentage(summary["total_pnl_pct"]),
+        "Cash",
+        format_currency(cash_balance),
+        help="Available cash balance",
     )
     col4.metric(
         "Positions",
-        f"{len(portfolio_df)}",
+        f"{summary.get('position_count', len(portfolio_df))}",
+        help="Number of active positions",
+    )
+
+    # Row 2: Unrealized P&L (total) and Today's P&L
+    col5, col6, col7, col8 = st.columns(4)
+
+    col5.metric(
+        "Unrealized P&L",
+        format_currency(summary["holdings_unrealized_pnl"]),
+        format_percentage(summary["holdings_pnl_pct"]),
+        help="Total unrealized profit/loss on holdings vs net invested capital",
+    )
+    
+    # Today's P&L with color indicator
+    today_pnl = summary.get("today_unrealized_pnl", 0)
+    today_pnl_pct = summary.get("today_pnl_pct", 0)
+    col6.metric(
+        "Today P&L",
+        format_currency(today_pnl),
+        format_percentage(today_pnl_pct) if today_pnl != 0 else None,
+        help="1-day unrealized P&L based on price change since prior close: Σ(close − prior_close) × net_shares",
+    )
+
+    col7.metric(
+        "Gross Exposure",
+        format_currency(summary["gross_exposure"]),
+        help="Sum of absolute market values: |long MV| + |short MV|",
+    )
+
+    col8.metric(
+        "Net Exposure",
+        format_currency(summary["net_exposure"]),
+        help="Net directional exposure: long MV − short MV",
     )
 
     st.divider()
 
     # Asset Allocation Pie Chart
     st.subheader("📊 Asset Allocation")
-
-    # Get cash balance
-    cash_balance = get_cash_balance()
 
     # Build allocation data: Cash + each stock's market value
     allocation_data = []

@@ -285,6 +285,78 @@ class PriceRepository:
             for r in results
         ]
 
+    def get_latest_and_prior_prices_for_assets(
+        self,
+        asset_ids: list[int] | None = None,
+    ) -> dict[int, dict]:
+        """
+        Get latest and prior close prices for multiple assets.
+
+        Used for calculating 1-day price change (today unrealized P&L).
+
+        Args:
+            asset_ids: Optional list of asset IDs to filter.
+
+        Returns:
+            Dict mapping asset_id to {"latest_close": float, "prior_close": float | None, "latest_date": str}.
+            prior_close is None if only one price point exists.
+        """
+        # Get last 2 prices per asset ordered by date desc
+        from sqlalchemy import literal_column
+        from sqlalchemy.orm import aliased
+
+        # Use window function to rank dates per asset
+        # ROW_NUMBER() OVER (PARTITION BY asset_id ORDER BY date DESC)
+        row_num = func.row_number().over(
+            partition_by=PriceDaily.asset_id,
+            order_by=PriceDaily.date.desc()
+        ).label("rn")
+
+        subq = select(
+            PriceDaily.asset_id,
+            PriceDaily.date,
+            PriceDaily.close,
+            row_num,
+        )
+
+        if asset_ids:
+            subq = subq.where(PriceDaily.asset_id.in_(asset_ids))
+
+        subq = subq.subquery()
+
+        # Get rows where rn <= 2 (latest and prior)
+        stmt = (
+            select(
+                subq.c.asset_id,
+                subq.c.date,
+                subq.c.close,
+                subq.c.rn,
+            )
+            .where(subq.c.rn <= 2)
+            .order_by(subq.c.asset_id, subq.c.rn)
+        )
+
+        results = self.session.execute(stmt).all()
+
+        # Build result dict
+        prices_by_asset: dict[int, dict] = {}
+        for row in results:
+            asset_id = row.asset_id
+            if asset_id not in prices_by_asset:
+                prices_by_asset[asset_id] = {
+                    "latest_close": None,
+                    "prior_close": None,
+                    "latest_date": None,
+                }
+
+            if row.rn == 1:
+                prices_by_asset[asset_id]["latest_close"] = row.close
+                prices_by_asset[asset_id]["latest_date"] = row.date
+            elif row.rn == 2:
+                prices_by_asset[asset_id]["prior_close"] = row.close
+
+        return prices_by_asset
+
 
 class ValuationRepository:
     """Repository for valuation metrics operations."""
