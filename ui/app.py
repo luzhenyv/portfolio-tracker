@@ -142,7 +142,7 @@ def render_overview_page():
         st.caption(f"📅 As of latest close: {summary['latest_price_date']}")
 
     # Row 1: NAV, Holdings, Cash, Positions
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
 
     col1.metric(
         "Total NAV",
@@ -159,16 +159,11 @@ def render_overview_page():
         format_currency(cash_balance),
         help="Available cash balance",
     )
-    col4.metric(
-        "Positions",
-        f"{summary.get('position_count', len(portfolio_df))}",
-        help="Number of active positions",
-    )
 
     # Row 2: Unrealized P&L (total) and Today's P&L
-    col5, col6, col7 = st.columns(3)
+    col4, col5, col6 = st.columns(3)
 
-    col5.metric(
+    col4.metric(
         "Unrealized P&L",
         format_currency(summary["holdings_unrealized_pnl"]),
         format_percentage(summary["holdings_pnl_pct"]),
@@ -178,18 +173,24 @@ def render_overview_page():
     # Today's P&L with color indicator
     today_pnl = summary.get("today_unrealized_pnl", 0)
     today_pnl_pct = summary.get("today_pnl_pct", 0)
-    col6.metric(
+    col5.metric(
         "Today P&L",
         format_currency(today_pnl),
         format_percentage(today_pnl_pct) if today_pnl != 0 else None,
         help="1-day unrealized P&L based on price change since prior close: Σ(close − prior_close) × net_shares",
     )
 
-    col7.metric(
-        "Gross Exposure",
-        format_currency(summary["gross_exposure"]),
-        help="Sum of absolute market values: |long MV| + |short MV|",
+    col6.metric(
+        "Positions",
+        f"{summary.get('position_count', len(portfolio_df))}",
+        help="Number of active positions",
     )
+
+    # col7.metric(
+    #     "Gross Exposure",
+    #     format_currency(summary["gross_exposure"]),
+    #     help="Sum of absolute market values: |long MV| + |short MV|",
+    # )
 
     st.divider()
 
