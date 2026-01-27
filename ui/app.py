@@ -136,7 +136,7 @@ def render_overview_page():
 
     # Portfolio Snapshot section
     st.subheader("📸 Portfolio Snapshot")
-    
+
     # Show data freshness
     if summary.get("latest_price_date"):
         st.caption(f"📅 As of latest close: {summary['latest_price_date']}")
@@ -169,7 +169,7 @@ def render_overview_page():
         format_percentage(summary["holdings_pnl_pct"]),
         help="Total unrealized profit/loss on holdings vs net invested capital",
     )
-    
+
     # Today's P&L with color indicator
     today_pnl = summary.get("today_unrealized_pnl", 0)
     today_pnl_pct = summary.get("today_pnl_pct", 0)
@@ -207,11 +207,13 @@ def render_overview_page():
         # Use net market value (long - short)
         market_value = row.get("net", 0)
         if market_value > 0:
-            allocation_data.append({
-                "Asset": row["ticker"], 
-                "Type": row.get("asset_type", "STOCK"),
-                "Value": market_value
-            })
+            allocation_data.append(
+                {
+                    "Asset": row["ticker"],
+                    "Type": row.get("asset_type", "STOCK"),
+                    "Value": market_value,
+                }
+            )
 
     if allocation_data:
         alloc_df = pd.DataFrame(allocation_data)
@@ -466,32 +468,30 @@ def render_positions_page():
         "avg_cost": st.column_config.TextColumn(
             "Net Avg Cost",
             width="small",
-            help="Average cost per share based on net invested capital (cost basis / net shares)"
+            help="Average cost per share based on net invested capital (cost basis / net shares)",
         ),
         "close": st.column_config.TextColumn(
-            "Current",
-            width="small",
-            help="Latest end-of-day price per share"
+            "Current", width="small", help="Latest end-of-day price per share"
         ),
         "market_value": st.column_config.TextColumn(
             "Market Value",
             width="medium",
-            help="Net market value = (long shares × price) - (short shares × price)"
+            help="Net market value = (long shares × price) - (short shares × price)",
         ),
         "display_pnl": st.column_config.TextColumn(
             "P&L",
             width="small",
-            help="Unrealized profit/loss = net market value - net invested capital"
+            help="Unrealized profit/loss = net market value - net invested capital",
         ),
         "pnl_pct": st.column_config.TextColumn(
             "P&L %",
             width="small",
-            help="Return on invested capital = (net market value - net invested) / net invested"
+            help="Return on invested capital = (net market value - net invested) / net invested",
         ),
         "net_weight": st.column_config.TextColumn(
             "Exposure %",
             width="small",
-            help="Share of absolute net exposure: $\\frac{|MV_{net}|}{\\sum |MV_{net}|}$ (positions only, excludes cash)"
+            help="Share of absolute net exposure: $\\frac{|MV_{net}|}{\\sum |MV_{net}|}$ (positions only, excludes cash)",
         ),
         "action": st.column_config.TextColumn("Action", width="small"),
         "reasons": st.column_config.TextColumn("Reasons", width="large"),
@@ -713,9 +713,7 @@ def render_admin_page():
                                 else AssetStatus.WATCHLIST
                             )
                             result = create_asset_with_data(
-                                new_ticker, 
-                                status, 
-                                asset_type=AssetType(asset_type)
+                                new_ticker, status, asset_type=AssetType(asset_type)
                             )
 
                         if result.success:
@@ -892,7 +890,7 @@ def render_watchlist_page():
     if "updated_at" in valuation_df.columns:
         latest_update = valuation_df["updated_at"].dropna().max()
         if pd.notna(latest_update):
-            if hasattr(latest_update, 'strftime'):
+            if hasattr(latest_update, "strftime"):
                 as_of_date = latest_update.strftime("%m/%d/%Y")
             else:
                 as_of_date = str(latest_update)[:10]
@@ -901,7 +899,7 @@ def render_watchlist_page():
     # Store original for comparison
     if "watchlist_original_df" not in st.session_state:
         st.session_state.watchlist_original_df = valuation_df.copy()
-    
+
     # Check if data has refreshed (e.g., different asset_ids)
     current_ids = set(valuation_df["asset_id"].tolist())
     original_ids = set(st.session_state.watchlist_original_df["asset_id"].tolist())
@@ -910,29 +908,56 @@ def render_watchlist_page():
 
     # ====== VALUATION MEASURES TABLE ======
     st.subheader("📊 Valuation Measures")
-    
+
     valuation_measures_cols = [
-        "ticker", "asset_id", "market_cap", "enterprise_value", 
-        "pe_trailing", "pe_forward", "peg", "price_to_sales", 
-        "price_to_book", "ev_to_revenue", "ev_ebitda", "valuation_action"
+        "ticker",
+        "asset_id",
+        "market_cap",
+        "enterprise_value",
+        "pe_trailing",
+        "pe_forward",
+        "peg",
+        "price_to_sales",
+        "price_to_book",
+        "ev_to_revenue",
+        "ev_ebitda",
+        "valuation_action",
     ]
-    
+
     # Create editor dataframe for valuation measures
     vm_df = valuation_df[["ticker", "asset_id"]].copy()
-    
+
     # Add valuation measure columns with formatting helpers
-    for col in ["market_cap", "enterprise_value", "pe_trailing", "pe_forward", 
-                "peg", "price_to_sales", "price_to_book", "ev_to_revenue", "ev_ebitda"]:
+    for col in [
+        "market_cap",
+        "enterprise_value",
+        "pe_trailing",
+        "pe_forward",
+        "peg",
+        "price_to_sales",
+        "price_to_book",
+        "ev_to_revenue",
+        "ev_ebitda",
+    ]:
         if col in valuation_df.columns:
             vm_df[col] = valuation_df[col]
         else:
             vm_df[col] = None
-    
+
     vm_df["valuation_action"] = valuation_df["valuation_action"]
-    
+
     # Add override flags
-    for col in ["market_cap", "enterprise_value", "pe_trailing", "pe_forward", 
-                "peg", "price_to_sales", "price_to_book", "ev_to_revenue", "ev_ebitda"]:
+    for col in [
+        "market_cap",
+        "enterprise_value",
+        "pe_trailing",
+        "pe_forward",
+        "peg",
+        "price_to_sales",
+        "price_to_book",
+        "ev_to_revenue",
+        "ev_ebitda",
+    ]:
         flag_col = f"{col}_overridden"
         if flag_col in valuation_df.columns:
             vm_df[flag_col] = valuation_df[flag_col]
@@ -942,7 +967,21 @@ def render_watchlist_page():
     edited_vm_df = st.data_editor(
         vm_df,
         hide_index=True,
-        disabled=["ticker", "asset_id", "valuation_action"] + [f"{c}_overridden" for c in ["market_cap", "enterprise_value", "pe_trailing", "pe_forward", "peg", "price_to_sales", "price_to_book", "ev_to_revenue", "ev_ebitda"]],
+        disabled=["ticker", "asset_id", "valuation_action"]
+        + [
+            f"{c}_overridden"
+            for c in [
+                "market_cap",
+                "enterprise_value",
+                "pe_trailing",
+                "pe_forward",
+                "peg",
+                "price_to_sales",
+                "price_to_book",
+                "ev_to_revenue",
+                "ev_ebitda",
+            ]
+        ],
         column_config={
             "ticker": st.column_config.TextColumn("Ticker", width="small"),
             "asset_id": None,  # Hidden
@@ -950,89 +989,96 @@ def render_watchlist_page():
                 "Market Cap",
                 width="medium",
                 format="%.2e",
-                help="Market Capitalization = Share Price × Shares Outstanding"
+                help="Market Capitalization = Share Price × Shares Outstanding",
             ),
             "enterprise_value": st.column_config.NumberColumn(
                 "Enterprise Value",
                 width="medium",
                 format="%.2e",
-                help="EV = Market Cap + Debt - Cash"
+                help="EV = Market Cap + Debt - Cash",
             ),
             "pe_trailing": st.column_config.NumberColumn(
                 "Trailing P/E",
                 width="small",
                 format="%.2f",
-                help="Trailing Price-to-Earnings: market price / TTM EPS"
+                help="Trailing Price-to-Earnings: market price / TTM EPS",
             ),
             "pe_forward": st.column_config.NumberColumn(
                 "Forward P/E",
                 width="small",
                 format="%.2f",
-                help="Forward Price-to-Earnings: market price / estimated next-year EPS"
+                help="Forward Price-to-Earnings: market price / estimated next-year EPS",
             ),
             "peg": st.column_config.NumberColumn(
                 "PEG Ratio",
                 width="small",
                 format="%.2f",
-                help="P/E-to-Growth: (P/E) / EPS growth % (< 1 = undervalued)"
+                help="P/E-to-Growth: (P/E) / EPS growth % (< 1 = undervalued)",
             ),
             "price_to_sales": st.column_config.NumberColumn(
                 "Price/Sales",
                 width="small",
                 format="%.2f",
-                help="Price-to-Sales ratio (trailing 12 months)"
+                help="Price-to-Sales ratio (trailing 12 months)",
             ),
             "price_to_book": st.column_config.NumberColumn(
                 "Price/Book",
                 width="small",
                 format="%.2f",
-                help="Price-to-Book ratio (most recent quarter)"
+                help="Price-to-Book ratio (most recent quarter)",
             ),
             "ev_to_revenue": st.column_config.NumberColumn(
-                "EV/Revenue",
-                width="small",
-                format="%.2f",
-                help="Enterprise Value / Revenue"
+                "EV/Revenue", width="small", format="%.2f", help="Enterprise Value / Revenue"
             ),
             "ev_ebitda": st.column_config.NumberColumn(
-                "EV/EBITDA",
-                width="small",
-                format="%.2f",
-                help="Enterprise Value / EBITDA"
+                "EV/EBITDA", width="small", format="%.2f", help="Enterprise Value / EBITDA"
             ),
             "valuation_action": st.column_config.TextColumn(
                 "Signal",
                 width="small",
-                help="BUY = attractive valuation | WAIT = mixed | AVOID = overvalued"
+                help="BUY = attractive valuation | WAIT = mixed | AVOID = overvalued",
             ),
             # Hide override flags
-            **{f"{c}_overridden": None for c in ["market_cap", "enterprise_value", "pe_trailing", "pe_forward", "peg", "price_to_sales", "price_to_book", "ev_to_revenue", "ev_ebitda"]},
+            **{
+                f"{c}_overridden": None
+                for c in [
+                    "market_cap",
+                    "enterprise_value",
+                    "pe_trailing",
+                    "pe_forward",
+                    "peg",
+                    "price_to_sales",
+                    "price_to_book",
+                    "ev_to_revenue",
+                    "ev_ebitda",
+                ]
+            },
         },
         key="valuation_measures_editor",
     )
 
     st.divider()
-    
+
     # ====== FINANCIAL HIGHLIGHTS TABLE ======
     st.subheader("💰 Financial Highlights")
-    
+
     # Create editor dataframe for financial highlights
     fh_df = valuation_df[["ticker", "asset_id"]].copy()
-    
+
     # Profitability metrics (stored as decimals, display as %)
     for col in ["profit_margin", "return_on_assets", "return_on_equity"]:
         if col in valuation_df.columns:
             fh_df[col] = valuation_df[col].apply(lambda x: x * 100 if pd.notna(x) else None)
         else:
             fh_df[col] = None
-    
+
     # Income statement metrics (large numbers)
     for col in ["revenue_ttm", "net_income_ttm", "diluted_eps_ttm"]:
         if col in valuation_df.columns:
             fh_df[col] = valuation_df[col]
         else:
             fh_df[col] = None
-    
+
     # Balance sheet & cash flow
     for col in ["total_cash", "total_debt_to_equity", "levered_free_cash_flow"]:
         if col in valuation_df.columns:
@@ -1043,11 +1089,19 @@ def render_watchlist_page():
                 fh_df[col] = valuation_df[col]
         else:
             fh_df[col] = None
-    
+
     # Add override flags
-    for col in ["profit_margin", "return_on_assets", "return_on_equity", 
-                "revenue_ttm", "net_income_ttm", "diluted_eps_ttm",
-                "total_cash", "total_debt_to_equity", "levered_free_cash_flow"]:
+    for col in [
+        "profit_margin",
+        "return_on_assets",
+        "return_on_equity",
+        "revenue_ttm",
+        "net_income_ttm",
+        "diluted_eps_ttm",
+        "total_cash",
+        "total_debt_to_equity",
+        "levered_free_cash_flow",
+    ]:
         flag_col = f"{col}_overridden"
         if flag_col in valuation_df.columns:
             fh_df[flag_col] = valuation_df[flag_col]
@@ -1057,7 +1111,21 @@ def render_watchlist_page():
     edited_fh_df = st.data_editor(
         fh_df,
         hide_index=True,
-        disabled=["ticker", "asset_id"] + [f"{c}_overridden" for c in ["profit_margin", "return_on_assets", "return_on_equity", "revenue_ttm", "net_income_ttm", "diluted_eps_ttm", "total_cash", "total_debt_to_equity", "levered_free_cash_flow"]],
+        disabled=["ticker", "asset_id"]
+        + [
+            f"{c}_overridden"
+            for c in [
+                "profit_margin",
+                "return_on_assets",
+                "return_on_equity",
+                "revenue_ttm",
+                "net_income_ttm",
+                "diluted_eps_ttm",
+                "total_cash",
+                "total_debt_to_equity",
+                "levered_free_cash_flow",
+            ]
+        ],
         column_config={
             "ticker": st.column_config.TextColumn("Ticker", width="small"),
             "asset_id": None,  # Hidden
@@ -1066,60 +1134,73 @@ def render_watchlist_page():
                 "Profit Margin",
                 width="small",
                 format="%.2f%%",
-                help="Net Income / Revenue (trailing 12 months)"
+                help="Net Income / Revenue (trailing 12 months)",
             ),
             "return_on_assets": st.column_config.NumberColumn(
                 "ROA (ttm)",
                 width="small",
                 format="%.2f%%",
-                help="Return on Assets (trailing 12 months)"
+                help="Return on Assets (trailing 12 months)",
             ),
             "return_on_equity": st.column_config.NumberColumn(
                 "ROE (ttm)",
                 width="small",
                 format="%.2f%%",
-                help="Return on Equity (trailing 12 months)"
+                help="Return on Equity (trailing 12 months)",
             ),
             # Income Statement
             "revenue_ttm": st.column_config.NumberColumn(
                 "Revenue (ttm)",
                 width="medium",
                 format="%.2e",
-                help="Total Revenue (trailing 12 months)"
+                help="Total Revenue (trailing 12 months)",
             ),
             "net_income_ttm": st.column_config.NumberColumn(
                 "Net Income (ttm)",
                 width="medium",
                 format="%.2e",
-                help="Net Income Available to Common (trailing 12 months)"
+                help="Net Income Available to Common (trailing 12 months)",
             ),
             "diluted_eps_ttm": st.column_config.NumberColumn(
                 "Diluted EPS",
                 width="small",
                 format="%.2f",
-                help="Diluted Earnings Per Share (trailing 12 months)"
+                help="Diluted Earnings Per Share (trailing 12 months)",
             ),
             # Balance Sheet & Cash Flow
             "total_cash": st.column_config.NumberColumn(
                 "Total Cash (mrq)",
                 width="medium",
                 format="%.2e",
-                help="Total Cash (most recent quarter)"
+                help="Total Cash (most recent quarter)",
             ),
             "total_debt_to_equity": st.column_config.NumberColumn(
                 "Debt/Equity (mrq)",
                 width="small",
                 format="%.2f%%",
-                help="Total Debt / Equity (most recent quarter)"
+                help="Total Debt / Equity (most recent quarter)",
             ),
             "levered_free_cash_flow": st.column_config.NumberColumn(
                 "Levered FCF (ttm)",
                 width="medium",
                 format="%.2e",
-                help="Levered Free Cash Flow (trailing 12 months)"
+                help="Levered Free Cash Flow (trailing 12 months)",
             ),
             # Hide override flags
-            **{f"{c}_overridden": None for c in ["profit_margin", "return_on_assets", "return_on_equity", "revenue_ttm", "net_income_ttm", "diluted_eps_ttm", "total_cash", "total_debt_to_equity", "levered_free_cash_flow"]},
+            **{
+                f"{c}_overridden": None
+                for c in [
+                    "profit_margin",
+                    "return_on_assets",
+                    "return_on_equity",
+                    "revenue_ttm",
+                    "net_income_ttm",
+                    "diluted_eps_ttm",
+                    "total_cash",
+                    "total_debt_to_equity",
+                    "levered_free_cash_flow",
+                ]
+            },
         },
         key="financial_highlights_editor",
     )
@@ -1131,13 +1212,13 @@ def render_watchlist_page():
     if changes:
         st.divider()
         st.subheader("📝 Pending Changes")
-        
+
         for change in changes:
             field_label = change["field"].replace("_", " ").title()
             old_val = _format_change_value(change["old_value"], change["field"])
             new_val = _format_change_value(change["new_value"], change["field"])
             st.write(f"**{change['ticker']}** — {field_label}: {old_val} → {new_val}")
-        
+
         if st.button("💾 Save Changes", type="primary"):
             _save_valuation_overrides(changes)
             st.success("✅ Overrides saved successfully!")
@@ -1164,16 +1245,22 @@ def _format_change_value(value: float | None, field: str) -> str:
     """Format a change value for display."""
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return "—"
-    
+
     # Percentage fields
     if field in ["profit_margin", "return_on_assets", "return_on_equity"]:
         return f"{value:.2f}%"
-    
+
     # Large number fields
-    if field in ["market_cap", "enterprise_value", "revenue_ttm", "net_income_ttm", 
-                 "total_cash", "levered_free_cash_flow"]:
+    if field in [
+        "market_cap",
+        "enterprise_value",
+        "revenue_ttm",
+        "net_income_ttm",
+        "total_cash",
+        "levered_free_cash_flow",
+    ]:
         return _format_large_number(value)
-    
+
     # Ratio fields
     return f"{value:.2f}"
 
@@ -1182,10 +1269,10 @@ def _format_large_number(value: float | None) -> str:
     """Format large numbers in B/T notation like Yahoo Finance."""
     if value is None or pd.isna(value):
         return "—"
-    
+
     abs_val = abs(value)
     sign = "-" if value < 0 else ""
-    
+
     if abs_val >= 1e12:
         return f"{sign}{abs_val / 1e12:.2f}T"
     elif abs_val >= 1e9:
@@ -1199,92 +1286,113 @@ def _format_large_number(value: float | None) -> str:
 
 
 def _detect_valuation_changes(
-    edited_vm_df: pd.DataFrame, 
-    edited_fh_df: pd.DataFrame, 
+    edited_vm_df: pd.DataFrame,
+    edited_fh_df: pd.DataFrame,
     original_df: pd.DataFrame,
     valuation_df: pd.DataFrame,
 ) -> list[dict]:
     """Detect changes between edited and original dataframes."""
     changes = []
-    
+
     # Valuation measures fields
-    vm_fields = ["market_cap", "enterprise_value", "pe_trailing", "pe_forward", 
-                 "peg", "price_to_sales", "price_to_book", "ev_to_revenue", "ev_ebitda"]
-    
+    vm_fields = [
+        "market_cap",
+        "enterprise_value",
+        "pe_trailing",
+        "pe_forward",
+        "peg",
+        "price_to_sales",
+        "price_to_book",
+        "ev_to_revenue",
+        "ev_ebitda",
+    ]
+
     # Financial highlights fields (note: percentages were multiplied by 100 for display)
     fh_percentage_fields = ["profit_margin", "return_on_assets", "return_on_equity"]
-    fh_other_fields = ["revenue_ttm", "net_income_ttm", "diluted_eps_ttm",
-                       "total_cash", "total_debt_to_equity", "levered_free_cash_flow"]
-    
+    fh_other_fields = [
+        "revenue_ttm",
+        "net_income_ttm",
+        "diluted_eps_ttm",
+        "total_cash",
+        "total_debt_to_equity",
+        "levered_free_cash_flow",
+    ]
+
     for idx, row in edited_vm_df.iterrows():
         asset_id = row["asset_id"]
         ticker = row["ticker"]
-        
+
         # Find original values
         orig_row = original_df[original_df["asset_id"] == asset_id]
         if orig_row.empty:
             continue
-        
+
         for field in vm_fields:
             if field not in edited_vm_df.columns or field not in original_df.columns:
                 continue
-                
+
             new_val = row[field]
             orig_val = orig_row.iloc[0][field]
-            
+
             if _values_differ(new_val, orig_val):
-                changes.append({
-                    "asset_id": asset_id,
-                    "ticker": ticker,
-                    "field": field,
-                    "old_value": orig_val,
-                    "new_value": new_val,
-                })
-    
+                changes.append(
+                    {
+                        "asset_id": asset_id,
+                        "ticker": ticker,
+                        "field": field,
+                        "old_value": orig_val,
+                        "new_value": new_val,
+                    }
+                )
+
     for idx, row in edited_fh_df.iterrows():
         asset_id = row["asset_id"]
         ticker = row["ticker"]
-        
+
         orig_row = original_df[original_df["asset_id"] == asset_id]
         if orig_row.empty:
             continue
-        
+
         # Percentage fields (need to convert back from display %)
         for field in fh_percentage_fields:
             if field not in edited_fh_df.columns or field not in original_df.columns:
                 continue
-            
+
             new_val_display = row[field]
             # Convert back to decimal
             new_val = new_val_display / 100 if pd.notna(new_val_display) else None
             orig_val = orig_row.iloc[0][field]
-            
+
             if _values_differ(new_val, orig_val):
-                changes.append({
-                    "asset_id": asset_id,
-                    "ticker": ticker,
-                    "field": field,
-                    "old_value": orig_val * 100 if pd.notna(orig_val) else None,
-                    "new_value": new_val_display,
-                })
-        
+                changes.append(
+                    {
+                        "asset_id": asset_id,
+                        "ticker": ticker,
+                        "field": field,
+                        "old_value": orig_val * 100 if pd.notna(orig_val) else None,
+                        "new_value": new_val_display,
+                    }
+                )
+
         # Other fields
         for field in fh_other_fields:
             if field not in edited_fh_df.columns or field not in original_df.columns:
                 continue
-            
+
             new_val = row[field]
             orig_val = orig_row.iloc[0][field]
-            
+
             if _values_differ(new_val, orig_val):
-                changes.append({
-                    "asset_id": asset_id,
-                    "ticker": ticker,
-                    "field": field,
-                    "old_value": orig_val,
-                    "new_value": new_val,
-                })
-    
+                changes.append(
+                    {
+                        "asset_id": asset_id,
+                        "ticker": ticker,
+                        "field": field,
+                        "old_value": orig_val,
+                        "new_value": new_val,
+                    }
+                )
+
     return changes
 
 
@@ -1303,43 +1411,57 @@ def _save_valuation_overrides(changes: list[dict]):
     """Save valuation override changes to database."""
     from db import get_db
     from db.repositories import ValuationOverrideRepository
-    
+
     db = get_db()
     with db.session() as session:
         override_repo = ValuationOverrideRepository(session)
-        
+
         # Group changes by asset_id
         changes_by_asset: dict[int, dict] = {}
         for change in changes:
             asset_id = change["asset_id"]
             if asset_id not in changes_by_asset:
                 changes_by_asset[asset_id] = {}
-            
+
             field = change["field"]
             new_value = change["new_value"]
-            
+
             # Convert percentage display values back to decimals for storage
             if field in ["profit_margin", "return_on_assets", "return_on_equity"]:
                 new_value = new_value / 100 if pd.notna(new_value) else None
-            
-            changes_by_asset[asset_id][f"{field}_override"] = new_value if pd.notna(new_value) else None
-        
+
+            changes_by_asset[asset_id][f"{field}_override"] = (
+                new_value if pd.notna(new_value) else None
+            )
+
         for asset_id, field_updates in changes_by_asset.items():
             # Get existing override to preserve other fields
             existing = override_repo.get_by_asset_id(asset_id)
-            
+
             # Build kwargs with existing values
             kwargs = {"asset_id": asset_id}
-            
+
             override_fields = [
-                "market_cap_override", "enterprise_value_override", "pe_trailing_override",
-                "pe_forward_override", "peg_override", "price_to_sales_override",
-                "price_to_book_override", "ev_to_revenue_override", "ev_ebitda_override",
-                "profit_margin_override", "return_on_assets_override", "return_on_equity_override",
-                "revenue_ttm_override", "net_income_ttm_override", "diluted_eps_ttm_override",
-                "total_cash_override", "total_debt_to_equity_override", "levered_free_cash_flow_override",
+                "market_cap_override",
+                "enterprise_value_override",
+                "pe_trailing_override",
+                "pe_forward_override",
+                "peg_override",
+                "price_to_sales_override",
+                "price_to_book_override",
+                "ev_to_revenue_override",
+                "ev_ebitda_override",
+                "profit_margin_override",
+                "return_on_assets_override",
+                "return_on_equity_override",
+                "revenue_ttm_override",
+                "net_income_ttm_override",
+                "diluted_eps_ttm_override",
+                "total_cash_override",
+                "total_debt_to_equity_override",
+                "levered_free_cash_flow_override",
             ]
-            
+
             for field in override_fields:
                 if field in field_updates:
                     kwargs[field] = field_updates[field]
@@ -1347,16 +1469,16 @@ def _save_valuation_overrides(changes: list[dict]):
                     kwargs[field] = getattr(existing, field)
                 else:
                     kwargs[field] = None
-            
+
             override_repo.upsert(**kwargs)
-        
+
         session.commit()
 
 
 def render_notes_page():
     """
     Render Notes page for investment journal and research notes.
-    
+
     Shows:
     - Recent notes across all targets
     - Filter by target type (Asset, Market, Journal)
@@ -1364,33 +1486,33 @@ def render_notes_page():
     - View/edit existing notes
     """
     st.header("📝 Investment Notes")
-    
+
     # Get existing tickers and market symbols for filters
     existing_tickers = get_all_tickers()
     market_symbols = get_market_symbols()
-    
+
     # Tabs: Recent | By Asset | By Market | Create
     if config.ui.enable_admin_ui:
         tabs = st.tabs(["Recent Notes", "By Asset", "By Market", "Create Note"])
     else:
         tabs = st.tabs(["Recent Notes", "By Asset", "By Market"])
-    
+
     # --- RECENT NOTES TAB ---
     with tabs[0]:
         st.subheader("🕐 Recent Notes")
-        
+
         recent_notes = get_recent_notes(limit=20)
-        
+
         if recent_notes:
             for note in recent_notes:
                 _render_note_card(note, show_target=True)
         else:
             st.info("No notes yet. Create your first note to get started!")
-    
+
     # --- BY ASSET TAB ---
     with tabs[1]:
         st.subheader("📈 Notes by Asset")
-        
+
         if existing_tickers:
             selected_ticker = st.selectbox(
                 "Select Asset",
@@ -1399,10 +1521,10 @@ def render_notes_page():
                 placeholder="Choose a ticker...",
                 key="notes_asset_filter",
             )
-            
+
             if selected_ticker:
                 asset_notes = get_notes_for_asset(selected_ticker)
-                
+
                 if asset_notes:
                     for note in asset_notes:
                         _render_note_card(note)
@@ -1410,11 +1532,11 @@ def render_notes_page():
                     st.info(f"No notes for {selected_ticker} yet.")
         else:
             st.info("No assets in portfolio. Add assets first.")
-    
+
     # --- BY MARKET TAB ---
     with tabs[2]:
         st.subheader("🌍 Market Notes")
-        
+
         # Common market symbols
         common_markets = [
             {"symbol": "^GSPC", "name": "S&P 500"},
@@ -1423,14 +1545,14 @@ def render_notes_page():
             {"symbol": "^VIX", "name": "VIX"},
             {"symbol": "^TNX", "name": "10Y Treasury"},
         ]
-        
+
         # Combine with existing market symbols
         all_markets = {m["symbol"]: m["name"] for m in common_markets}
         for m in market_symbols:
             all_markets[m["symbol"]] = m["name"]
-        
+
         market_options = [f"{sym} ({name})" for sym, name in all_markets.items()]
-        
+
         selected_market = st.selectbox(
             "Select Market/Index",
             options=market_options,
@@ -1438,31 +1560,31 @@ def render_notes_page():
             placeholder="Choose a market symbol...",
             key="notes_market_filter",
         )
-        
+
         if selected_market:
             # Extract symbol from selection
             symbol = selected_market.split(" (")[0]
-            
+
             # Get notes for this market symbol
             from db import get_db
             from db.repositories import NoteRepository, NoteTargetRepository
-            
+
             db = get_db()
             with db.session() as session:
                 target_repo = NoteTargetRepository(session)
                 note_repo = NoteRepository(session)
-                
+
                 # Find target for this symbol
                 from db.models import NoteTargetKind
                 from sqlalchemy import select
                 from db.models import NoteTarget
-                
+
                 stmt = select(NoteTarget).where(
                     NoteTarget.kind == NoteTargetKind.MARKET,
                     NoteTarget.symbol == symbol,
                 )
                 target = session.scalar(stmt)
-                
+
                 if target:
                     market_notes = note_repo.list_by_target(target.id)
                     if market_notes:
@@ -1472,12 +1594,12 @@ def render_notes_page():
                         st.info(f"No notes for {symbol} yet.")
                 else:
                     st.info(f"No notes for {symbol} yet.")
-    
+
     # --- CREATE NOTE TAB (Admin only) ---
     if config.ui.enable_admin_ui and len(tabs) > 3:
         with tabs[3]:
             st.subheader("✏️ Create New Note")
-            
+
             with st.form("create_note_form", clear_on_submit=True):
                 # Target selection
                 target_type = st.radio(
@@ -1485,12 +1607,12 @@ def render_notes_page():
                     ["Asset", "Market/Index", "Journal"],
                     horizontal=True,
                 )
-                
+
                 # Target-specific fields
                 target_ticker = None
                 target_symbol = None
                 target_symbol_name = None
-                
+
                 if target_type == "Asset":
                     target_ticker = st.selectbox(
                         "Select Asset",
@@ -1511,7 +1633,7 @@ def render_notes_page():
                             "Display Name (optional)",
                             placeholder="S&P 500, VIX, etc.",
                         )
-                
+
                 # Note type
                 note_type_options = [t.value for t in NoteType]
                 selected_type = st.selectbox(
@@ -1519,45 +1641,45 @@ def render_notes_page():
                     options=note_type_options,
                     index=note_type_options.index("JOURNAL"),
                 )
-                
+
                 # Note content
                 title = st.text_input(
                     "Title (optional)",
                     placeholder="Brief title for the note",
                 )
-                
+
                 summary = st.text_area(
                     "Summary (optional)",
                     placeholder="Brief summary for table display (max 500 chars)",
                     max_chars=500,
                     height=80,
                 )
-                
+
                 key_points = st.text_area(
                     "Key Points (optional)",
                     placeholder="Key takeaways, one per line",
                     height=80,
                 )
-                
+
                 body_md = st.text_area(
                     "Note Content *",
                     placeholder="Full note content in Markdown...",
                     height=200,
                 )
-                
+
                 tags = st.text_input(
                     "Tags (optional)",
                     placeholder="Comma-separated: bullish, earnings, risk",
                 )
-                
+
                 submitted = st.form_submit_button("Create Note", type="primary")
-                
+
                 if submitted:
                     if not body_md.strip():
                         st.error("Note content is required")
                     else:
                         note_type = NoteType(selected_type)
-                        
+
                         if target_type == "Asset":
                             if not target_ticker:
                                 st.error("Please select an asset")
@@ -1576,7 +1698,7 @@ def render_notes_page():
                                     celebrate_and_rerun("Saving note...", delay=1, animation=None)
                                 else:
                                     st.error(result.status_message)
-                        
+
                         elif target_type == "Market/Index":
                             if not target_symbol:
                                 st.error("Please enter a market symbol")
@@ -1596,7 +1718,7 @@ def render_notes_page():
                                     celebrate_and_rerun("Saving note...", delay=1, animation=None)
                                 else:
                                     st.error(result.status_message)
-                        
+
                         else:  # Journal
                             result = create_journal_entry(
                                 body_md=body_md,
@@ -1627,15 +1749,15 @@ def _render_note_card(note, show_target: bool = False):
         NoteType.NEWS: "📰",
         NoteType.OTHER: "📝",
     }.get(note.note_type, "📝")
-    
+
     # Format date
     created_str = note.created_at.strftime("%Y-%m-%d %H:%M") if note.created_at else ""
-    
+
     # Build title
     display_title = note.title or note.summary or f"{note.note_type.value} Note"
     if note.pinned:
         display_title = f"📌 {display_title}"
-    
+
     # Target info
     target_info = ""
     if show_target and note.target:
@@ -1645,29 +1767,29 @@ def _render_note_card(note, show_target: bool = False):
             target_info = f" • {note.target.symbol_name or note.target.symbol}"
         elif note.target.kind == NoteTargetKind.TRADE:
             target_info = f" • Trade #{note.target.trade_id}"
-    
+
     with st.expander(f"{type_emoji} {display_title}{target_info} — {created_str}"):
         # Summary and key points
         if note.summary:
             st.caption(note.summary)
-        
+
         if note.key_points:
             st.markdown("**Key Points:**")
             for point in note.key_points.split("\n"):
                 if point.strip():
                     st.markdown(f"• {point.strip()}")
-        
+
         st.divider()
-        
+
         # Full content
         st.markdown(note.body_md)
-        
+
         # Tags
         if note.tags:
             st.markdown("---")
             tag_list = [t.strip() for t in note.tags.split(",") if t.strip()]
             st.caption("Tags: " + " • ".join(f"`{tag}`" for tag in tag_list))
-        
+
         # Actions (admin only)
         if config.ui.enable_admin_ui:
             col1, col2, col3 = st.columns([1, 1, 4])
