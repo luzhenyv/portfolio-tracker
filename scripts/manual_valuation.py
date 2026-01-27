@@ -8,6 +8,9 @@ Supports both:
 - Portfolio market value computation (positions × latest prices)
 
 Usage:
+    # fetch the latest prices and automatically fill any gaps in your data
+    python scripts/manual_valuation.py --mode prices
+
     # Fetch valuation metrics for all assets
     python scripts/manual_valuation.py --mode multiples
 
