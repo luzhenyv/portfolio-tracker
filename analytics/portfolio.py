@@ -66,7 +66,7 @@ class PortfolioSummary:
     short_unrealized_pnl: float
     # Net/Gross/Total
     gross_exposure: float
-    net_exposure: float
+    holdings_market_value: float
     total_unrealized_pnl: float
     total_realized_pnl: float
     total_pnl: float  # Realized + Unrealized
@@ -270,7 +270,7 @@ class PortfolioAnalyzer:
             short_market_value=short_mv_sum,
             short_unrealized_pnl=short_unrl_sum,
             gross_exposure=total_gross_exposure,
-            net_exposure=long_mv_sum - short_mv_sum,
+            holdings_market_value=long_mv_sum - short_mv_sum,
             total_unrealized_pnl=long_unrl_sum + short_unrl_sum,
             total_realized_pnl=realized_summary["net_realized_pnl"],
             total_pnl=long_unrl_sum + short_unrl_sum + realized_summary["net_realized_pnl"],
@@ -345,7 +345,7 @@ class PortfolioAnalyzer:
         # Calculate total cost and market value using net invested
         # Net invested represents remaining capital after realized gains/losses
         total_cost = summary.total_net_invested
-        holdings_market_value = summary.long_market_value - summary.short_market_value  # Net value
+        holdings_market_value = summary.holdings_market_value
         # P&L percentage based on net invested capital
         holdings_pnl_pct = (summary.total_net_invested_pnl / total_cost) if total_cost > 0 else 0.0
         today_pnl_pct = (today_unrealized_pnl / holdings_market_value) if holdings_market_value > 0 else 0.0
@@ -360,7 +360,6 @@ class PortfolioAnalyzer:
             "short_pnl": summary.short_unrealized_pnl,
             # Exposure metrics
             "gross_exposure": summary.gross_exposure,
-            "net_exposure": summary.net_exposure,
             # P&L breakdown
             "total_unrealized_pnl": summary.total_unrealized_pnl,
             "total_realized_pnl": summary.total_realized_pnl,
@@ -463,7 +462,7 @@ if __name__ == "__main__":
         print(f"  Long MV: ${summary['long_mv']:,.2f}")
         print(f"  Short MV: ${summary['short_mv']:,.2f}")
         print(f"  Gross Exposure: ${summary['gross_exposure']:,.2f}")
-        print(f"  Net Exposure: ${summary['net_exposure']:,.2f}")
+        print(f"  Holdings Market Value: ${summary['holdings_market_value']:,.2f}")
         print(f"  Unrealized P&L: ${summary['total_unrealized_pnl']:+,.2f}")
         print(f"  Realized P&L: ${summary['total_realized_pnl']:+,.2f}")
         print(f"  Total P&L: ${summary['total_pnl']:+,.2f}")

@@ -152,7 +152,7 @@ def cmd_summary(args):
         print(f"   Long MV:         ${summary['long_mv']:>12,.0f}")
         print(f"   Short MV:        ${summary['short_mv']:>12,.0f}")
         print(f"   Gross Exposure:  ${summary['gross_exposure']:>12,.0f}")
-        print(f"   Net Exposure:    ${summary['net_exposure']:>+12,.0f}")
+        print(f"   Holdings (Net):  ${summary['holdings_market_value']:>12,.0f}")
 
         print(f"\n📈 P&L")
         print(f"   Unrealized:      ${summary['total_unrealized_pnl']:>+12,.0f}")

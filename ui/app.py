@@ -166,7 +166,7 @@ def render_overview_page():
     )
 
     # Row 2: Unrealized P&L (total) and Today's P&L
-    col5, col6, col7, col8 = st.columns(4)
+    col5, col6, col7 = st.columns(3)
 
     col5.metric(
         "Unrealized P&L",
@@ -189,12 +189,6 @@ def render_overview_page():
         "Gross Exposure",
         format_currency(summary["gross_exposure"]),
         help="Sum of absolute market values: |long MV| + |short MV|",
-    )
-
-    col8.metric(
-        "Net Exposure",
-        format_currency(summary["net_exposure"]),
-        help="Net directional exposure: long MV − short MV",
     )
 
     st.divider()
