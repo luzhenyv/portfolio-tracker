@@ -20,7 +20,7 @@ import pandas as pd
 
 from config import config
 from db import get_db
-from db.repositories import ValuationRepository
+from db.repositories import ValuationRepository, ValuationOverrideRepository
 
 
 class ValuationSignal(str, Enum):
@@ -52,6 +52,12 @@ class ValuationAssessment:
     peg_band: MetricBand
     signal: ValuationSignal
     reasons: list[str]
+    # Override flags - True if user override is applied
+    pe_forward_overridden: bool = False
+    peg_overridden: bool = False
+    ev_ebitda_overridden: bool = False
+    revenue_growth_overridden: bool = False
+    eps_growth_overridden: bool = False
 
 
 class ValuationAnalyzer:
@@ -175,6 +181,11 @@ class ValuationAnalyzer:
         ev_ebitda: float | None,
         revenue_growth: float | None,
         eps_growth: float | None,
+        pe_forward_overridden: bool = False,
+        peg_overridden: bool = False,
+        ev_ebitda_overridden: bool = False,
+        revenue_growth_overridden: bool = False,
+        eps_growth_overridden: bool = False,
     ) -> ValuationAssessment:
         """
         Analyze valuation for a single asset.
@@ -182,11 +193,12 @@ class ValuationAnalyzer:
         Args:
             ticker: Asset ticker symbol.
             asset_id: Asset database ID.
-            pe_forward: Forward P/E ratio.
-            peg: PEG ratio.
-            ev_ebitda: EV/EBITDA ratio.
-            revenue_growth: Revenue growth rate.
-            eps_growth: EPS growth rate.
+            pe_forward: Effective Forward P/E ratio (override if present else fetched).
+            peg: Effective PEG ratio (override if present else fetched).
+            ev_ebitda: Effective EV/EBITDA ratio (override if present else fetched).
+            revenue_growth: Effective revenue growth rate.
+            eps_growth: Effective EPS growth rate.
+            *_overridden: Flags indicating if user override is applied.
             
         Returns:
             ValuationAssessment with signal and reasons.
@@ -209,11 +221,19 @@ class ValuationAnalyzer:
             peg_band=peg_band,
             signal=signal,
             reasons=reasons,
+            pe_forward_overridden=pe_forward_overridden,
+            peg_overridden=peg_overridden,
+            ev_ebitda_overridden=ev_ebitda_overridden,
+            revenue_growth_overridden=revenue_growth_overridden,
+            eps_growth_overridden=eps_growth_overridden,
         )
     
     def run_valuation(self) -> list[ValuationAssessment]:
         """
         Run valuation analysis for all assets with valuation data.
+        
+        Merges user overrides with fetched values. For each metric:
+        effective_value = override if present else fetched_value
         
         Returns:
             List of ValuationAssessment for each asset.
@@ -222,18 +242,67 @@ class ValuationAnalyzer:
         
         with db.session() as session:
             valuation_repo = ValuationRepository(session)
+            override_repo = ValuationOverrideRepository(session)
+            
             valuations = valuation_repo.get_all_with_assets()
+            
+            # Get all overrides for assets with valuations
+            asset_ids = [v.asset_id for v in valuations]
+            overrides = override_repo.get_by_asset_ids(asset_ids)
         
         assessments = []
         for v in valuations:
+            override = overrides.get(v.asset_id)
+            
+            # Compute effective values: override if present else fetched
+            if override and override.pe_forward_override is not None:
+                pe_forward = override.pe_forward_override
+                pe_forward_overridden = True
+            else:
+                pe_forward = v.pe_forward
+                pe_forward_overridden = False
+            
+            if override and override.peg_override is not None:
+                peg = override.peg_override
+                peg_overridden = True
+            else:
+                peg = v.peg
+                peg_overridden = False
+            
+            if override and override.ev_ebitda_override is not None:
+                ev_ebitda = override.ev_ebitda_override
+                ev_ebitda_overridden = True
+            else:
+                ev_ebitda = v.ev_ebitda
+                ev_ebitda_overridden = False
+            
+            if override and override.revenue_growth_override is not None:
+                revenue_growth = override.revenue_growth_override
+                revenue_growth_overridden = True
+            else:
+                revenue_growth = v.revenue_growth
+                revenue_growth_overridden = False
+            
+            if override and override.eps_growth_override is not None:
+                eps_growth = override.eps_growth_override
+                eps_growth_overridden = True
+            else:
+                eps_growth = v.eps_growth
+                eps_growth_overridden = False
+            
             assessment = self.analyze_asset(
                 ticker=v.asset.ticker,
                 asset_id=v.asset_id,
-                pe_forward=v.pe_forward,
-                peg=v.peg,
-                ev_ebitda=v.ev_ebitda,
-                revenue_growth=v.revenue_growth,
-                eps_growth=v.eps_growth,
+                pe_forward=pe_forward,
+                peg=peg,
+                ev_ebitda=ev_ebitda,
+                revenue_growth=revenue_growth,
+                eps_growth=eps_growth,
+                pe_forward_overridden=pe_forward_overridden,
+                peg_overridden=peg_overridden,
+                ev_ebitda_overridden=ev_ebitda_overridden,
+                revenue_growth_overridden=revenue_growth_overridden,
+                eps_growth_overridden=eps_growth_overridden,
             )
             assessments.append(assessment)
         
@@ -262,6 +331,12 @@ class ValuationAnalyzer:
                 "eps_growth": a.eps_growth,
                 "valuation_action": a.signal.value,
                 "reasons": "; ".join(a.reasons),
+                # Override flags
+                "pe_forward_overridden": a.pe_forward_overridden,
+                "peg_overridden": a.peg_overridden,
+                "ev_ebitda_overridden": a.ev_ebitda_overridden,
+                "revenue_growth_overridden": a.revenue_growth_overridden,
+                "eps_growth_overridden": a.eps_growth_overridden,
             }
             for a in assessments
         ])

@@ -26,6 +26,7 @@ from db.models import (
     Trade,
     TradeAction,
     ValuationMetric,
+    ValuationMetricOverride,
 )
 
 
@@ -423,6 +424,86 @@ class ValuationRepository:
         self.session.add(valuation)
         self.session.flush()
         return valuation
+
+
+class ValuationOverrideRepository:
+    """Repository for valuation metric override operations."""
+    
+    def __init__(self, session: Session):
+        self.session = session
+    
+    def get_by_asset_id(self, asset_id: int) -> ValuationMetricOverride | None:
+        """Get override for a single asset."""
+        return self.session.get(ValuationMetricOverride, asset_id)
+    
+    def get_by_asset_ids(self, asset_ids: list[int]) -> dict[int, ValuationMetricOverride]:
+        """
+        Get overrides for multiple assets.
+        
+        Returns:
+            Dict mapping asset_id to ValuationMetricOverride.
+        """
+        if not asset_ids:
+            return {}
+        
+        stmt = (
+            select(ValuationMetricOverride)
+            .where(ValuationMetricOverride.asset_id.in_(asset_ids))
+        )
+        overrides = self.session.scalars(stmt).all()
+        return {o.asset_id: o for o in overrides}
+    
+    def get_all(self) -> Sequence[ValuationMetricOverride]:
+        """Get all overrides."""
+        stmt = select(ValuationMetricOverride)
+        return self.session.scalars(stmt).all()
+    
+    def upsert(
+        self,
+        asset_id: int,
+        peg_override: float | None = None,
+        pe_forward_override: float | None = None,
+        ev_ebitda_override: float | None = None,
+        revenue_growth_override: float | None = None,
+        eps_growth_override: float | None = None,
+    ) -> ValuationMetricOverride:
+        """
+        Insert or update valuation metric overrides.
+        
+        NULL values mean no override (use fetched value).
+        """
+        existing = self.get_by_asset_id(asset_id)
+        
+        if existing:
+            existing.peg_override = peg_override
+            existing.pe_forward_override = pe_forward_override
+            existing.ev_ebitda_override = ev_ebitda_override
+            existing.revenue_growth_override = revenue_growth_override
+            existing.eps_growth_override = eps_growth_override
+            existing.updated_at = datetime.utcnow()
+            self.session.flush()
+            return existing
+        
+        override = ValuationMetricOverride(
+            asset_id=asset_id,
+            peg_override=peg_override,
+            pe_forward_override=pe_forward_override,
+            ev_ebitda_override=ev_ebitda_override,
+            revenue_growth_override=revenue_growth_override,
+            eps_growth_override=eps_growth_override,
+        )
+        self.session.add(override)
+        self.session.flush()
+        return override
+    
+    def delete(self, asset_id: int) -> bool:
+        """Delete override for an asset."""
+        override = self.get_by_asset_id(asset_id)
+        if override:
+            self.session.delete(override)
+            self.session.flush()
+            return True
+        return False
 
 
 class TradeRepository:

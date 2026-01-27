@@ -126,3 +126,14 @@ ON cash_transactions(transaction_type);
 CREATE INDEX IF NOT EXISTS idx_cash_transactions_asset
 ON cash_transactions(asset_id);
 
+CREATE TABLE IF NOT EXISTS valuation_metric_overrides (
+    asset_id INTEGER PRIMARY KEY,
+    peg_override REAL,
+    pe_forward_override REAL,
+    ev_ebitda_override REAL,
+    revenue_growth_override REAL,
+    eps_growth_override REAL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE
+);

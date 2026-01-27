@@ -867,32 +867,12 @@ def render_admin_page():
 
 def render_watchlist_page():
     """
-    Render Watchlist & Valuation page.
+    Render Watchlist & Valuation page with editable metrics.
 
     Shows:
     - Valuation metrics for all assets
     - BUY/WAIT/AVOID signals
-
-    Future: Add asset creation UI using services.asset_service.create_asset_with_data()
-    Example integration:
-        from services.asset_service import create_asset_with_data, AssetStatus
-
-        with st.form("add_asset_form"):
-            ticker = st.text_input("Ticker Symbol")
-            status = st.selectbox("Status", ["OWNED", "WATCHLIST"])
-            submitted = st.form_submit_button("Add Asset")
-
-            if submitted and ticker:
-                result = create_asset_with_data(
-                    ticker,
-                    AssetStatus.OWNED if status == "OWNED" else AssetStatus.WATCHLIST
-                )
-                if result.success:
-                    st.success(result.status_message)
-                    if result.prices_fetched > 0:
-                        st.metric("Prices Fetched", result.prices_fetched)
-                else:
-                    st.error("Failed to add asset")
+    - Editable PEG column for user overrides
     """
     st.header("👀 Watchlist & Valuation")
 
@@ -907,65 +887,87 @@ def render_watchlist_page():
         st.caption("Run the valuation fetcher to populate this view.")
         return
 
-    # Format for display
-    display_df = valuation_df.copy()
+    # Store original for comparison
+    if "watchlist_original_df" not in st.session_state:
+        st.session_state.watchlist_original_df = valuation_df.copy()
+    
+    # Check if data has refreshed (e.g., different asset_ids)
+    current_ids = set(valuation_df["asset_id"].tolist())
+    original_ids = set(st.session_state.watchlist_original_df["asset_id"].tolist())
+    if current_ids != original_ids:
+        st.session_state.watchlist_original_df = valuation_df.copy()
 
-    # Format numeric columns
-    for col in ["pe_forward", "peg", "ev_ebitda"]:
+    # Prepare editable dataframe - keep numeric values for editing
+    edit_df = valuation_df.copy()
+    
+    # Add display columns for override indicators
+    edit_df["peg_display"] = edit_df.apply(
+        lambda row: f"{row['peg']:.2f} ✏️" if pd.notna(row['peg']) and row.get('peg_overridden', False)
+        else (f"{row['peg']:.2f}" if pd.notna(row['peg']) else None),
+        axis=1
+    )
+    
+    # Format non-editable numeric columns for display
+    display_df = valuation_df.copy()
+    
+    for col in ["pe_forward", "ev_ebitda"]:
         if col in display_df.columns:
-            display_df[col] = display_df[col].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "—")
+            display_df[f"{col}_fmt"] = display_df[col].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "—")
 
     for col in ["revenue_growth", "eps_growth"]:
         if col in display_df.columns:
-            display_df[col] = display_df[col].apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—")
+            display_df[f"{col}_fmt"] = display_df[col].apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—")
 
-    display_cols = [
-        "ticker",
-        "pe_forward",
-        "peg",
-        "ev_ebitda",
-        "revenue_growth",
-        "eps_growth",
-        "valuation_action",
-    ]
+    # Create the editable dataframe with only the columns we need
+    # Multiply growth values by 100 for percentage display (0.116 -> 11.6)
+    editor_df = pd.DataFrame({
+        "ticker": valuation_df["ticker"],
+        "asset_id": valuation_df["asset_id"],
+        "pe_forward": valuation_df["pe_forward"],
+        "peg": valuation_df["peg"],
+        "ev_ebitda": valuation_df["ev_ebitda"],
+        "revenue_growth": valuation_df["revenue_growth"].apply(lambda x: x * 100 if pd.notna(x) else None),
+        "eps_growth": valuation_df["eps_growth"].apply(lambda x: x * 100 if pd.notna(x) else None),
+        "valuation_action": valuation_df["valuation_action"],
+        "peg_overridden": valuation_df.get("peg_overridden", False),
+    })
 
-    # Color-code actions
-    def highlight_action(row):
-        action = row.get("valuation_action", "")
-        if action == "BUY":
-            return ["background-color: #d4edda"] * len(row)
-        elif action == "AVOID":
-            return ["background-color: #f8d7da"] * len(row)
-        return [""] * len(row)
-
-    st.dataframe(
-        display_df[display_cols],
+    # Use data_editor with editable PEG column
+    edited_df = st.data_editor(
+        editor_df,
         hide_index=True,
+        disabled=["ticker", "asset_id", "pe_forward", "ev_ebitda", "revenue_growth", "eps_growth", "valuation_action", "peg_overridden"],
         column_config={
             "ticker": st.column_config.TextColumn("Ticker", width="small"),
-            "pe_forward": st.column_config.TextColumn(
+            "asset_id": None,  # Hide asset_id column
+            "pe_forward": st.column_config.NumberColumn(
                 "Fwd P/E",
                 width="small",
+                format="%.1f",
                 help="Forward Price-to-Earnings ratio: market price / expected next-year EPS (lower = cheaper)"
             ),
-            "peg": st.column_config.TextColumn(
+            "peg": st.column_config.NumberColumn(
                 "PEG",
                 width="small",
-                help="Price/Earnings-to-Growth ratio: (P/E) / EPS growth % (< 1 = undervalued, > 2 = overvalued)"
+                format="%.2f",
+                help="Price/Earnings-to-Growth ratio: (P/E) / EPS growth % (< 1 = undervalued, > 2 = overvalued). Edit to override."
             ),
-            "ev_ebitda": st.column_config.TextColumn(
+            "ev_ebitda": st.column_config.NumberColumn(
                 "EV/EBITDA",
                 width="small",
+                format="%.1f",
                 help="Enterprise Value / EBITDA multiple: measures valuation relative to operating earnings"
             ),
-            "revenue_growth": st.column_config.TextColumn(
-                "Rev Growth",
+            "revenue_growth": st.column_config.NumberColumn(
+                "Rev Growth %",
                 width="small",
+                format="%.1f%%",
                 help="Year-over-year revenue growth rate (trailing or projected)"
             ),
-            "eps_growth": st.column_config.TextColumn(
-                "EPS Growth",
+            "eps_growth": st.column_config.NumberColumn(
+                "EPS Growth %",
                 width="small",
+                format="%.1f%%",
                 help="Year-over-year earnings per share growth rate"
             ),
             "valuation_action": st.column_config.TextColumn(
@@ -973,8 +975,57 @@ def render_watchlist_page():
                 width="small",
                 help="BUY = attractive valuation | WAIT = mixed signals | AVOID = overvalued"
             ),
+            "peg_overridden": st.column_config.CheckboxColumn(
+                "✏️",
+                width="small",
+                help="Checked if user override is applied",
+            ),
         },
+        key="watchlist_editor",
     )
+
+    # Check for changes and show save button
+    original_df = st.session_state.watchlist_original_df
+    changes = []
+    
+    for idx, row in edited_df.iterrows():
+        asset_id = row["asset_id"]
+        new_peg = row["peg"]
+        
+        # Find original value
+        orig_row = original_df[original_df["asset_id"] == asset_id]
+        if not orig_row.empty:
+            orig_peg = orig_row.iloc[0]["peg"]
+            
+            # Compare values (handle NaN)
+            if pd.isna(new_peg) and pd.isna(orig_peg):
+                continue
+            if pd.notna(new_peg) and pd.notna(orig_peg) and abs(new_peg - orig_peg) < 0.001:
+                continue
+            if pd.isna(new_peg) != pd.isna(orig_peg) or (pd.notna(new_peg) and abs(new_peg - orig_peg) >= 0.001):
+                changes.append({
+                    "asset_id": asset_id,
+                    "ticker": row["ticker"],
+                    "old_peg": orig_peg,
+                    "new_peg": new_peg,
+                })
+
+    if changes:
+        st.divider()
+        st.subheader("📝 Pending Changes")
+        
+        for change in changes:
+            old_val = f"{change['old_peg']:.2f}" if pd.notna(change['old_peg']) else "—"
+            new_val = f"{change['new_peg']:.2f}" if pd.notna(change['new_peg']) else "—"
+            st.write(f"**{change['ticker']}**: PEG {old_val} → {new_val}")
+        
+        if st.button("💾 Save Changes", type="primary"):
+            _save_peg_overrides(changes)
+            st.success("✅ Overrides saved successfully!")
+            # Clear the original to force refresh
+            del st.session_state.watchlist_original_df
+            time.sleep(0.5)
+            st.rerun()
 
     # Legend
     st.divider()
@@ -984,9 +1035,43 @@ def render_watchlist_page():
     col3.markdown("🔴 **AVOID** — Multiple metrics suggest overvaluation")
 
     st.caption(
-        "💡 Valuation is multiples-based (auto-fetched). "
-        "Decisions are band-based, not precise price targets."
+        "💡 Edit the PEG column to override auto-fetched values. "
+        "Overrides are indicated by ✏️ checkbox. Changes require saving."
     )
+
+
+def _save_peg_overrides(changes: list[dict]):
+    """Save PEG override changes to database."""
+    from db import get_db
+    from db.repositories import ValuationOverrideRepository
+    
+    db = get_db()
+    with db.session() as session:
+        override_repo = ValuationOverrideRepository(session)
+        
+        for change in changes:
+            asset_id = change["asset_id"]
+            new_peg = change["new_peg"]
+            
+            # Get existing override to preserve other fields
+            existing = override_repo.get_by_asset_id(asset_id)
+            
+            if existing:
+                override_repo.upsert(
+                    asset_id=asset_id,
+                    peg_override=new_peg if pd.notna(new_peg) else None,
+                    pe_forward_override=existing.pe_forward_override,
+                    ev_ebitda_override=existing.ev_ebitda_override,
+                    revenue_growth_override=existing.revenue_growth_override,
+                    eps_growth_override=existing.eps_growth_override,
+                )
+            else:
+                override_repo.upsert(
+                    asset_id=asset_id,
+                    peg_override=new_peg if pd.notna(new_peg) else None,
+                )
+        
+        session.commit()
 
 
 def render_notes_page():

@@ -107,6 +107,9 @@ class Asset(Base):
     valuation: Mapped[Optional["ValuationMetric"]] = relationship(
         "ValuationMetric", back_populates="asset", uselist=False, cascade="all, delete-orphan"
     )
+    valuation_override: Mapped[Optional["ValuationMetricOverride"]] = relationship(
+        "ValuationMetricOverride", back_populates="asset", uselist=False, cascade="all, delete-orphan"
+    )
     watchlist_target: Mapped[Optional["WatchlistTarget"]] = relationship(
         "WatchlistTarget", back_populates="asset", uselist=False, cascade="all, delete-orphan"
     )
@@ -291,6 +294,38 @@ class ValuationMetric(Base):
 
     def __repr__(self) -> str:
         return f"<ValuationMetric(asset_id={self.asset_id}, pe_forward={self.pe_forward})>"
+
+
+class ValuationMetricOverride(Base):
+    """
+    User-provided override values for valuation metrics.
+    
+    Stores manual adjustments that take precedence over auto-fetched values.
+    Supports all metrics: PEG, P/E, EV/EBITDA, growth rates.
+    NULL means no override (use fetched value).
+    """
+    __tablename__ = "valuation_metric_overrides"
+
+    asset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True
+    )
+    peg_override: Mapped[Optional[float]] = mapped_column(Float)
+    pe_forward_override: Mapped[Optional[float]] = mapped_column(Float)
+    ev_ebitda_override: Mapped[Optional[float]] = mapped_column(Float)
+    revenue_growth_override: Mapped[Optional[float]] = mapped_column(Float)
+    eps_growth_override: Mapped[Optional[float]] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now(timezone.utc), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc)
+    )
+
+    # Relationships
+    asset: Mapped["Asset"] = relationship("Asset", back_populates="valuation_override")
+
+    def __repr__(self) -> str:
+        return f"<ValuationMetricOverride(asset_id={self.asset_id}, peg_override={self.peg_override})>"
 
 
 class WatchlistTarget(Base):
