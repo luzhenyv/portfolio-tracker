@@ -206,6 +206,8 @@ python main.py pnl --since 2024-01-01
 
 ### 4️⃣ Fetch Market Data
 
+Run the following command to update both end-of-day prices and fundamental valuation metrics (market cap, P/E ratios, PEG, margins, etc.) for all tracked assets:
+
 ```bash
 # Run full daily update (prices + valuations)
 python main.py update
@@ -213,6 +215,8 @@ python main.py update
 # Or run from jobs module
 python -m jobs.daily_update
 ```
+
+> **Note on Valuation Metrics:** The system automatically fetches Yahoo Finance "Statistics" data into the `valuation_metrics` table. Since market caps and price-based ratios (P/E, PEG) fluctuate daily based on price movements, and financial highlights (Margins, ROE) update after earnings reports, it is recommended to run this update daily to keep your analytics current.
 
 ### 🔧 Manual Valuation (Fix Missing Data)
 
