@@ -614,22 +614,11 @@ def render_admin_page():
             )
 
             # Trade date and time inputs
-            trade_at_col, trade_time_col = st.columns(2)
-            with trade_at_col:
-                trade_at = st.date_input(
-                    "Trade Date",
-                    value=date.today(),
-                    help="Date of trade execution",
-                )
-            with trade_time_col:
-                trade_time = st.time_input(
-                    "Trade Time",
-                    value=datetime.now().replace(second=0, microsecond=0).time(),
-                    help="Time of trade execution (optional)",
-                )
-            
-            # Combine date and time into datetime string
-            trade_attime_str = f"{trade_at} {trade_time.strftime('%H:%M:%S')}"
+            trade_at = st.datetime_input(
+                "Trade Date & Time",
+                value=datetime.now(),
+                help="Date and time of trade execution",
+            )
 
             fees = st.number_input(
                 "Fees ($)",
@@ -669,7 +658,7 @@ def render_admin_page():
                                     ticker=ticker,
                                     shares=shares,
                                     price=price,
-                                    trade_at=trade_attime_str,
+                                    trade_at=trade_at,
                                     fees=fees,
                                 )
 
@@ -693,7 +682,7 @@ def render_admin_page():
                                 ticker=ticker,
                                 shares=shares,
                                 price=price,
-                                trade_at=trade_attime_str,
+                                trade_at=trade_at,
                                 fees=fees,
                             )
 
