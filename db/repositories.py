@@ -627,7 +627,7 @@ class TradeRepository:
     def create_trade(
         self,
         asset_id: int,
-        trade_date: str,
+        trade_at: datetime,
         action: TradeAction,
         shares: float,
         price: float,
@@ -637,7 +637,7 @@ class TradeRepository:
         """Create a new trade record."""
         trade = Trade(
             asset_id=asset_id,
-            trade_date=trade_date,
+            trade_at=trade_at,
             action=action,
             shares=shares,
             price=price,
@@ -648,11 +648,15 @@ class TradeRepository:
         self.session.flush()
         return trade
     
+    def get_by_id(self, trade_id: int) -> Trade | None:
+        """Get trade by ID."""
+        return self.session.get(Trade, trade_id)
+    
     def get_trades_for_asset(
         self,
         asset_id: int,
-        start_date: str | None = None,
-        end_date: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
     ) -> Sequence[Trade]:
         """Get trades for an asset within optional date range."""
         stmt = (
@@ -661,17 +665,73 @@ class TradeRepository:
         )
         
         if start_date:
-            stmt = stmt.where(Trade.trade_date >= start_date)
+            stmt = stmt.where(Trade.trade_at >= start_date)
         if end_date:
-            stmt = stmt.where(Trade.trade_date <= end_date)
+            stmt = stmt.where(Trade.trade_at <= end_date)
         
-        stmt = stmt.order_by(Trade.trade_date.desc(), Trade.id.desc())
+        stmt = stmt.order_by(Trade.trade_at.desc(), Trade.id.desc())
         return self.session.scalars(stmt).all()
+    
+    def get_latest_trade_for_asset(self, asset_id: int) -> Trade | None:
+        """Get the most recent trade for an asset."""
+        stmt = (
+            select(Trade)
+            .where(Trade.asset_id == asset_id)
+            .order_by(Trade.trade_at.desc(), Trade.id.desc())
+            .limit(1)
+        )
+        return self.session.scalar(stmt)
+    
+    def get_latest_trade_ids_by_ticker(self) -> dict[str, int]:
+        """
+        Get the latest trade ID for each ticker.
+        
+        Used to determine which trades are editable (only latest per ticker).
+        
+        Returns:
+            Dict mapping ticker to latest trade_id
+        """
+        # Subquery to get max trade_at per asset
+        from sqlalchemy import and_
+        
+        subq = (
+            select(
+                Trade.asset_id,
+                func.max(Trade.trade_at).label("max_date"),
+            )
+            .group_by(Trade.asset_id)
+            .subquery()
+        )
+        
+        # For each asset, get the trade with max date (and max id for ties)
+        # This requires a second level of filtering
+        stmt = (
+            select(Trade.id, Asset.ticker)
+            .join(Asset, Trade.asset_id == Asset.id)
+            .join(
+                subq,
+                and_(
+                    Trade.asset_id == subq.c.asset_id,
+                    Trade.trade_at == subq.c.max_date
+                )
+            )
+            .order_by(Trade.asset_id, Trade.id.desc())
+        )
+        
+        results = self.session.execute(stmt).all()
+        
+        # Keep only the highest id per ticker (for same-datetime trades)
+        latest_by_ticker: dict[str, int] = {}
+        for trade_id, ticker in results:
+            if ticker not in latest_by_ticker:
+                latest_by_ticker[ticker] = trade_id
+        
+        return latest_by_ticker
     
     def get_all_trades(
         self,
-        start_date: str | None = None,
-        end_date: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
         action: TradeAction | None = None,
         limit: int | None = None,
     ) -> Sequence[Trade]:
@@ -679,13 +739,13 @@ class TradeRepository:
         stmt = select(Trade).options(joinedload(Trade.asset))
         
         if start_date:
-            stmt = stmt.where(Trade.trade_date >= start_date)
+            stmt = stmt.where(Trade.trade_at >= start_date)
         if end_date:
-            stmt = stmt.where(Trade.trade_date <= end_date)
+            stmt = stmt.where(Trade.trade_at <= end_date)
         if action:
             stmt = stmt.where(Trade.action == action)
         
-        stmt = stmt.order_by(Trade.trade_date.desc(), Trade.id.desc())
+        stmt = stmt.order_by(Trade.trade_at.desc(), Trade.id.desc())
         
         if limit:
             stmt = stmt.limit(limit)
@@ -694,8 +754,8 @@ class TradeRepository:
     
     def get_realized_pnl_summary(
         self,
-        start_date: str | None = None,
-        end_date: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
     ) -> dict[str, float]:
         """Get realized P&L summary across all trades."""
         stmt = select(
@@ -704,9 +764,9 @@ class TradeRepository:
         )
         
         if start_date:
-            stmt = stmt.where(Trade.trade_date >= start_date)
+            stmt = stmt.where(Trade.trade_at >= start_date)
         if end_date:
-            stmt = stmt.where(Trade.trade_date <= end_date)
+            stmt = stmt.where(Trade.trade_at <= end_date)
         
         result = self.session.execute(stmt).first()
         
@@ -715,11 +775,67 @@ class TradeRepository:
             "total_fees": result.total_fees or 0.0,
             "net_realized_pnl": (result.total_realized or 0.0) - (result.total_fees or 0.0),
         }
+    
+    def update_trade(
+        self,
+        trade_id: int,
+        shares: float | None = None,
+        price: float | None = None,
+        fees: float | None = None,
+        trade_at: str | datetime | None = None,
+    ) -> Trade | None:
+        """
+        Update an existing trade's editable fields.
+        
+        Note: Does NOT recalculate realized_pnl - caller must handle reconciliation.
+        
+        Args:
+            trade_id: ID of trade to update
+            shares: New share count (if provided)
+            price: New price per share (if provided)
+            fees: New fee amount (if provided)
+            trade_at: New trade date (if provided)
+            
+        Returns:
+            Updated Trade or None if not found
+        """
+        trade = self.get_by_id(trade_id)
+        if not trade:
+            return None
+        
+        if shares is not None:
+            trade.shares = shares
+        if price is not None:
+            trade.price = price
+        if fees is not None:
+            trade.fees = fees
+        if trade_at is not None:
+            trade.trade_at = trade_at
+        
+        self.session.flush()
+        return trade
+    
+    def delete_trade(self, trade_id: int) -> bool:
+        """
+        Delete a trade by ID.
+        
+        Note: Does NOT handle cascading effects - caller must handle reconciliation.
+        
+        Returns:
+            True if deleted, False if not found
+        """
+        trade = self.get_by_id(trade_id)
+        if not trade:
+            return False
+        
+        self.session.delete(trade)
+        self.session.flush()
+        return True
 
     def list_all_chronological(
         self,
-        start_date: str | None = None,
-        end_date: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
     ) -> Sequence[Trade]:
         """
         Get all trades in chronological order for position reconstruction.
@@ -734,11 +850,27 @@ class TradeRepository:
         stmt = select(Trade).options(joinedload(Trade.asset))
         
         if start_date:
-            stmt = stmt.where(Trade.trade_date >= start_date)
+            stmt = stmt.where(Trade.trade_at >= start_date)
         if end_date:
-            stmt = stmt.where(Trade.trade_date <= end_date)
+            stmt = stmt.where(Trade.trade_at <= end_date)
         
-        stmt = stmt.order_by(Trade.trade_date.asc(), Trade.id.asc())
+        stmt = stmt.order_by(Trade.trade_at.asc(), Trade.id.asc())
+        return self.session.scalars(stmt).all()
+    
+    def list_trades_for_asset_chronological(self, asset_id: int) -> Sequence[Trade]:
+        """
+        Get all trades for an asset in chronological order.
+        
+        Used for position reconstruction after trade edit/delete.
+        
+        Returns:
+            Trades sorted by trade_at ASC, id ASC
+        """
+        stmt = (
+            select(Trade)
+            .where(Trade.asset_id == asset_id)
+            .order_by(Trade.trade_at.asc(), Trade.id.asc())
+        )
         return self.session.scalars(stmt).all()
 
 
@@ -862,7 +994,7 @@ class PositionRepository:
         stmt = (
             select(Trade)
             .where(Trade.asset_id == asset_id)
-            .order_by(Trade.trade_date, Trade.id)
+            .order_by(Trade.trade_at, Trade.id)
         )
         trades = self.session.scalars(stmt).all()
         
@@ -956,7 +1088,7 @@ class CashRepository:
     
     def create_transaction(
         self,
-        transaction_date: str,
+        transaction_at: datetime,
         transaction_type: CashTransactionType,
         amount: float,
         trade_id: int | None = None,
@@ -967,7 +1099,7 @@ class CashRepository:
         Create a new cash transaction.
         
         Args:
-            transaction_date: Date in YYYY-MM-DD format
+            transaction_at: Date of transaction
             transaction_type: Type of transaction
             amount: Signed amount (+ inflow, - outflow)
             trade_id: Optional reference to related trade
@@ -978,7 +1110,7 @@ class CashRepository:
             Created CashTransaction
         """
         transaction = CashTransaction(
-            transaction_date=transaction_date,
+            transaction_at=transaction_at,
             transaction_type=transaction_type,
             amount=amount,
             trade_id=trade_id,
@@ -992,7 +1124,7 @@ class CashRepository:
     def deposit(
         self,
         amount: float,
-        transaction_date: str | None = None,
+        transaction_at: datetime | None = None,
         description: str | None = None,
     ) -> CashTransaction:
         """
@@ -1000,7 +1132,7 @@ class CashRepository:
         
         Args:
             amount: Deposit amount (positive)
-            transaction_date: Date (defaults to today)
+            transaction_at: Date (defaults to today)a
             description: Optional description
             
         Returns:
@@ -1009,11 +1141,11 @@ class CashRepository:
         if amount <= 0:
             raise ValueError("Deposit amount must be positive")
         
-        if transaction_date is None:
-            transaction_date = datetime.now().strftime("%Y-%m-%d")
+        if transaction_at is None:
+            transaction_at = datetime.now()
         
         return self.create_transaction(
-            transaction_date=transaction_date,
+            transaction_at=transaction_at,
             transaction_type=CashTransactionType.DEPOSIT,
             amount=amount,
             description=description or "Cash deposit",
@@ -1022,7 +1154,7 @@ class CashRepository:
     def withdraw(
         self,
         amount: float,
-        transaction_date: str | None = None,
+        transaction_at: datetime | None = None,
         description: str | None = None,
     ) -> CashTransaction:
         """
@@ -1030,7 +1162,7 @@ class CashRepository:
         
         Args:
             amount: Withdrawal amount (positive, will be stored as negative)
-            transaction_date: Date (defaults to today)
+            transaction_at: Date (defaults to today)
             description: Optional description
             
         Returns:
@@ -1039,11 +1171,11 @@ class CashRepository:
         if amount <= 0:
             raise ValueError("Withdrawal amount must be positive")
         
-        if transaction_date is None:
-            transaction_date = datetime.now().strftime("%Y-%m-%d")
+        if transaction_at is None:
+            transaction_at = datetime.now()
         
         return self.create_transaction(
-            transaction_date=transaction_date,
+            transaction_at=transaction_at,
             transaction_type=CashTransactionType.WITHDRAW,
             amount=-amount,  # Store as negative (outflow)
             description=description or "Cash withdrawal",
@@ -1053,19 +1185,19 @@ class CashRepository:
         self,
         asset_id: int,
         amount: float,
-        transaction_date: str,
+        transaction_at: datetime,
         description: str | None = None,
     ) -> tuple[CashTransaction, bool]:
         """
         Record a dividend payment with idempotency.
         
-        Uses deduplication strategy: asset_id + transaction_date + amount
+        Uses deduplication strategy: asset_id + transaction_at + amount
         to prevent duplicate dividend entries on reruns.
         
         Args:
             asset_id: Asset ID for dividend attribution
             amount: Dividend amount (positive, cash inflow)
-            transaction_date: Ex-dividend or payment date (YYYY-MM-DD)
+            transaction_at: Ex-dividend or payment date (YYYY-MM-DD)
             description: Optional description
             
         Returns:
@@ -1078,13 +1210,13 @@ class CashRepository:
             raise ValueError("Dividend amount must be positive")
         
         # Check for duplicate
-        existing = self.find_dividend(asset_id, amount, transaction_date)
+        existing = self.find_dividend(asset_id, amount, transaction_at)
         if existing:
             return existing, False
         
         # Create new dividend transaction
         transaction = CashTransaction(
-            transaction_date=transaction_date,
+            transaction_at=transaction_at,
             transaction_type=CashTransactionType.DIVIDEND,
             amount=amount,  # Positive for inflow
             asset_id=asset_id,
@@ -1098,17 +1230,17 @@ class CashRepository:
         self,
         asset_id: int,
         amount: float,
-        transaction_date: str,
+        transaction_at: datetime,
     ) -> CashTransaction | None:
         """
         Find existing dividend matching the dedup key.
         
-        Dedup key: asset_id + transaction_date + amount
+        Dedup key: asset_id + transaction_at + amount
         
         Args:
             asset_id: Asset ID
             amount: Dividend amount
-            transaction_date: Transaction date
+            transaction_at: Transaction date
             
         Returns:
             Existing CashTransaction if found, else None
@@ -1117,7 +1249,7 @@ class CashRepository:
             select(CashTransaction)
             .where(
                 CashTransaction.asset_id == asset_id,
-                CashTransaction.transaction_date == transaction_date,
+                CashTransaction.transaction_at == transaction_at,
                 CashTransaction.transaction_type == CashTransactionType.DIVIDEND,
                 CashTransaction.amount == amount,
             )
@@ -1127,8 +1259,8 @@ class CashRepository:
     def get_dividends(
         self,
         asset_id: int | None = None,
-        start_date: str | None = None,
-        end_date: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
     ) -> Sequence[CashTransaction]:
         """
         Get dividend transactions with optional filters.
@@ -1149,17 +1281,17 @@ class CashRepository:
         if asset_id is not None:
             stmt = stmt.where(CashTransaction.asset_id == asset_id)
         if start_date:
-            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+            stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
-            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+            stmt = stmt.where(CashTransaction.transaction_at <= end_date)
         
-        stmt = stmt.order_by(CashTransaction.transaction_date.desc())
+        stmt = stmt.order_by(CashTransaction.transaction_at.desc())
         return self.session.scalars(stmt).all()
     
     def get_dividend_summary_by_asset(
         self,
-        start_date: str | None = None,
-        end_date: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
     ) -> dict[int, float]:
         """
         Get total dividends grouped by asset.
@@ -1184,9 +1316,9 @@ class CashRepository:
         )
         
         if start_date:
-            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+            stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
-            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+            stmt = stmt.where(CashTransaction.transaction_at <= end_date)
         
         results = self.session.execute(stmt).all()
         return {r.asset_id: r.total for r in results}
@@ -1235,7 +1367,7 @@ class CashRepository:
         
         # Record main trade cash flow
         tx = self.create_transaction(
-            transaction_date=trade.trade_date,
+            transaction_at=trade.trade_at,
             transaction_type=tx_type,
             amount=amount,
             trade_id=trade.id,
@@ -1247,7 +1379,7 @@ class CashRepository:
         # Record fees separately if present
         if fees > 0:
             fee_tx = self.create_transaction(
-                transaction_date=trade.trade_date,
+                transaction_at=trade.trade_at,
                 transaction_type=CashTransactionType.FEE,
                 amount=-fees,  # Fees are always outflow
                 trade_id=trade.id,
@@ -1258,10 +1390,35 @@ class CashRepository:
         
         return transactions
     
+    def delete_transactions_by_trade_id(self, trade_id: int) -> int:
+        """
+        Delete all cash transactions linked to a specific trade.
+        
+        Used during trade reconciliation to remove and regenerate cash flows.
+        
+        Args:
+            trade_id: ID of the trade whose cash transactions should be deleted
+            
+        Returns:
+            Number of transactions deleted
+        """
+        stmt = (
+            select(CashTransaction)
+            .where(CashTransaction.trade_id == trade_id)
+        )
+        transactions = self.session.scalars(stmt).all()
+        count = len(transactions)
+        
+        for tx in transactions:
+            self.session.delete(tx)
+        
+        self.session.flush()
+        return count
+    
     def get_all_transactions(
         self,
-        start_date: str | None = None,
-        end_date: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
         transaction_type: CashTransactionType | None = None,
         limit: int | None = None,
     ) -> Sequence[CashTransaction]:
@@ -1269,13 +1426,13 @@ class CashRepository:
         stmt = select(CashTransaction)
         
         if start_date:
-            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+            stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
-            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+            stmt = stmt.where(CashTransaction.transaction_at <= end_date)
         if transaction_type:
             stmt = stmt.where(CashTransaction.transaction_type == transaction_type)
         
-        stmt = stmt.order_by(CashTransaction.transaction_date.desc(), CashTransaction.id.desc())
+        stmt = stmt.order_by(CashTransaction.transaction_at.desc(), CashTransaction.id.desc())
         
         if limit:
             stmt = stmt.limit(limit)
@@ -1299,7 +1456,7 @@ class CashRepository:
         stmt = select(func.sum(CashTransaction.amount))
         
         if as_of_date:
-            stmt = stmt.where(CashTransaction.transaction_date <= as_of_date)
+            stmt = stmt.where(CashTransaction.transaction_at <= as_of_date)
         
         result = self.session.scalar(stmt)
         return result or 0.0
@@ -1322,7 +1479,7 @@ class CashRepository:
             starting_balance = self.get_balance(as_of_date=start_date)
             # Subtract transactions on start_date to get balance before
             stmt = select(func.sum(CashTransaction.amount)).where(
-                CashTransaction.transaction_date == start_date
+                CashTransaction.transaction_at == start_date
             )
             on_start = self.session.scalar(stmt) or 0.0
             starting_balance -= on_start
@@ -1330,9 +1487,9 @@ class CashRepository:
         # Get transactions in range
         stmt = select(CashTransaction.amount)
         if start_date:
-            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+            stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
-            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+            stmt = stmt.where(CashTransaction.transaction_at <= end_date)
         
         amounts = self.session.scalars(stmt).all()
         
@@ -1368,9 +1525,9 @@ class CashRepository:
         ).group_by(CashTransaction.transaction_type)
         
         if start_date:
-            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+            stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
-            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+            stmt = stmt.where(CashTransaction.transaction_at <= end_date)
         
         results = self.session.execute(stmt).all()
         
@@ -1392,24 +1549,24 @@ class CashRepository:
         starting_balance = 0.0
         if start_date:
             stmt = select(func.sum(CashTransaction.amount)).where(
-                CashTransaction.transaction_date < start_date
+                CashTransaction.transaction_at < start_date
             )
             starting_balance = self.session.scalar(stmt) or 0.0
         
         # Get transactions in period (chronological order for running balance)
         stmt = select(CashTransaction)
         if start_date:
-            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+            stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
-            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+            stmt = stmt.where(CashTransaction.transaction_at <= end_date)
         
         if sort_desc:
             stmt = stmt.order_by(
-                CashTransaction.transaction_date.desc(),
+                CashTransaction.transaction_at.desc(),
             )
         else:
             stmt = stmt.order_by(
-                CashTransaction.transaction_date.asc(),
+                CashTransaction.transaction_at.asc(),
             )
         
         transactions = self.session.scalars(stmt).all()
@@ -1421,7 +1578,7 @@ class CashRepository:
         for tx in transactions:
             balance += tx.amount
             ledger.append({
-                "date": tx.transaction_date,
+                "date": tx.transaction_at,
                 "type": tx.transaction_type.value,
                 "amount": tx.amount,
                 "description": tx.description or "",
@@ -1456,24 +1613,24 @@ class CashRepository:
         starting_balance = 0.0
         if start_date:
             stmt = select(func.sum(CashTransaction.amount)).where(
-                CashTransaction.transaction_date < start_date
+                CashTransaction.transaction_at < start_date
             )
             starting_balance = self.session.scalar(stmt) or 0.0
         
         # Get daily net cash flows
         stmt = (
             select(
-                CashTransaction.transaction_date,
+                CashTransaction.transaction_at,
                 func.sum(CashTransaction.amount).label("daily_flow"),
             )
-            .group_by(CashTransaction.transaction_date)
-            .order_by(CashTransaction.transaction_date)
+            .group_by(CashTransaction.transaction_at)
+            .order_by(CashTransaction.transaction_at)
         )
         
         if start_date:
-            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+            stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
-            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+            stmt = stmt.where(CashTransaction.transaction_at <= end_date)
         
         results = self.session.execute(stmt).all()
         
@@ -1483,7 +1640,7 @@ class CashRepository:
         
         for r in results:
             running += r.daily_flow
-            balances[r.transaction_date] = running
+            balances[r.transaction_at] = running
         
         return balances
 
@@ -1505,12 +1662,12 @@ class CashRepository:
         stmt = select(CashTransaction)
         
         if start_date:
-            stmt = stmt.where(CashTransaction.transaction_date >= start_date)
+            stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
-            stmt = stmt.where(CashTransaction.transaction_date <= end_date)
+            stmt = stmt.where(CashTransaction.transaction_at <= end_date)
         
         stmt = stmt.order_by(
-            CashTransaction.transaction_date.asc(),
+            CashTransaction.transaction_at.asc(),
             CashTransaction.id.asc(),
         )
         return self.session.scalars(stmt).all()
