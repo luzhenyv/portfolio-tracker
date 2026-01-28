@@ -192,7 +192,7 @@ class Trade(Base):
     asset_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    trade_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
+    trade_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # Full timestamp
     action: Mapped[TradeAction] = mapped_column(
         SQLEnum(TradeAction, native_enum=False, length=10),
         nullable=False
@@ -209,7 +209,7 @@ class Trade(Base):
     asset: Mapped["Asset"] = relationship("Asset")
 
     __table_args__ = (
-        Index("idx_trades_asset_date", "asset_id", "trade_date"),
+        Index("idx_trades_asset_date", "asset_id", "trade_at"),
     )
 
     def __repr__(self) -> str:
@@ -492,7 +492,7 @@ class CashTransaction(Base):
     __tablename__ = "cash_transactions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    transaction_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
+    transaction_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     transaction_type: Mapped[CashTransactionType] = mapped_column(
         SQLEnum(CashTransactionType, native_enum=False, length=20),
         nullable=False
@@ -514,7 +514,7 @@ class CashTransaction(Base):
     trade: Mapped[Optional["Trade"]] = relationship("Trade")
 
     __table_args__ = (
-        Index("idx_cash_transactions_date", "transaction_date"),
+        Index("idx_cash_transactions_date", "transaction_at"),
         Index("idx_cash_transactions_type", "transaction_type"),
         Index("idx_cash_transactions_asset", "asset_id"),
     )
