@@ -862,16 +862,9 @@ def render_admin_page():
                 trade_id = trade.id
                 is_editable = trade_id in editable_trade_ids
                 
-                # Format trade_at as datetime for the editor
-                if hasattr(trade.trade_at, 'strftime'):
-                    trade_attime = trade.trade_at
-                else:
-                    # Parse string date (backward compat)
-                    trade_attime = datetime.strptime(trade.trade_at, "%Y-%m-%d")
-                
                 trade_data.append({
                     "trade_id": trade_id,
-                    "Date": trade_attime,
+                    "Date": trade.trade_at,
                     "Ticker": ticker,
                     "Action": trade.action.value,
                     "Shares": trade.shares,
@@ -900,7 +893,6 @@ def render_admin_page():
                 "trade_id": st.column_config.NumberColumn(
                     "ID",
                     help="Trade ID",
-                    width="small",
                 ),
                 "Date": st.column_config.DatetimeColumn(
                     "Date",
@@ -910,12 +902,10 @@ def render_admin_page():
                 "Ticker": st.column_config.TextColumn(
                     "Ticker",
                     disabled=True,
-                    width="small",
                 ),
                 "Action": st.column_config.TextColumn(
                     "Action",
                     disabled=True,
-                    width="small",
                 ),
                 "Shares": st.column_config.NumberColumn(
                     "Shares",
@@ -941,22 +931,26 @@ def render_admin_page():
                     disabled=True,
                     help="Auto-calculated after save",
                 ),
-                "Editable": st.column_config.CheckboxColumn(
-                    "✏️",
-                    help="Only latest trade per ticker is editable",
-                    disabled=True,
-                    width="small",
-                ),
             }
             
             # Editable data editor
             edited_df = st.data_editor(
                 trade_df,
                 column_config=column_config,
-                disabled=["trade_id", "Ticker", "Action", "Realized P&L", "Editable"],
+                disabled=["trade_id", "Date", "Ticker", "Action", "Realized P&L"],
                 hide_index=True,
                 use_container_width=True,
                 key="trades_editor",
+                column_order=[
+                    "trade_id",
+                    "Date",
+                    "Ticker",
+                    "Action",
+                    "Shares",
+                    "Price",
+                    "Fees",
+                    "Realized P&L",
+                ],
             )
             
             # Action buttons
