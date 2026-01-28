@@ -2,6 +2,7 @@
 Cash Service - Handles cash balance and ledger operations.
 """
 
+import datetime
 import logging
 from db import get_db
 from db.repositories import CashRepository
@@ -15,7 +16,7 @@ def get_cash_balance() -> float:
         cash_repo = CashRepository(session)
         return cash_repo.get_balance()
 
-def deposit_cash(amount: float, transaction_at: str, description: str | None = None):
+def deposit_cash(amount: float, transaction_at: datetime.datetime, description: str | None = None):
     """Execute cash deposit."""
     db = get_db()
     with db.session() as session:
@@ -26,7 +27,7 @@ def deposit_cash(amount: float, transaction_at: str, description: str | None = N
             description=description,
         )
 
-def withdraw_cash(amount: float, transaction_at: str, description: str | None = None):
+def withdraw_cash(amount: float, transaction_at: datetime.datetime, description: str | None = None):
     """Execute cash withdrawal."""
     db = get_db()
     with db.session() as session:

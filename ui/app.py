@@ -771,10 +771,10 @@ def render_admin_page():
                 help="Amount to deposit or withdraw",
             )
 
-            cash_date = st.date_input(
-                "Transaction Date",
-                value=date.today(),
-                help="Date of cash transaction",
+            cash_date = st.datetime_input(
+                "Transaction Date & Time",
+                value=datetime.now(),
+                help="Date & time of cash transaction",
             )
 
             description = st.text_input(
@@ -793,14 +793,14 @@ def render_admin_page():
                     # Execute deposit
                     tx = deposit_cash(
                         amount=amount,
-                        transaction_at=str(cash_date),
+                        transaction_at=cash_date,
                         description=description or None,
                     )
 
                     new_balance = get_current_cash_balance()
                     st.success(
                         f"✅ **Deposited ${amount:,.2f}**\n\n"
-                        f"Date: {cash_date}\n\n"
+                        f"Date & Time: {cash_date}\n\n"
                         f"💵 New balance: ${new_balance:,.2f}"
                     )
                     celebrate_and_rerun()
@@ -819,14 +819,14 @@ def render_admin_page():
                         # Execute withdrawal
                         tx = withdraw_cash(
                             amount=amount,
-                            transaction_at=str(cash_date),
+                            transaction_at=cash_date,
                             description=description or None,
                         )
 
                         new_balance = get_current_cash_balance()
                         st.success(
                             f"✅ **Withdrew ${amount:,.2f}**\n\n"
-                            f"Date: {cash_date}\n\n"
+                            f"Date & Time: {cash_date}\n\n"
                             f"💵 New balance: ${new_balance:,.2f}"
                         )
                     celebrate_and_rerun()
