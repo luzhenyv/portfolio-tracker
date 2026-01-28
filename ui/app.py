@@ -831,214 +831,167 @@ def render_admin_page():
                         )
                     celebrate_and_rerun()
     # --- RECENT ACTIVITY ---
+    st.divider()
     st.subheader("📒 Recent Activity")
 
     activity_tabs = st.tabs(["Recent Trades", "Cash Ledger"])
 
     with activity_tabs[0]:
-        # Show recent trades with editable data editor
+        # Show recent trades with inline actions
         recent_trades = get_recent_trades(limit=20)
 
         if recent_trades:
             # Get latest trade IDs per ticker (only these are editable)
             latest_trade_ids = get_latest_trade_ids_by_ticker()
             editable_trade_ids = set(latest_trade_ids.values())
-            
-            # Build trade data with trade_id for editing
-            trade_data = []
+
+            st.caption("💡 Only the latest trade per ticker can be edited or deleted.")
+
+            # Define dialog functions at the module level (before the loop)
+            @st.dialog("Edit Trade")
+            def edit_trade_dialog(trade_row):
+                with st.form("edit_trade_form"):
+                    st.text_input("Ticker", value=trade_row["Ticker"], disabled=True)
+                    st.text_input("Action", value=trade_row["Action"], disabled=True)
+                    trade_at = st.datetime_input(
+                        "Trade Date & Time",
+                        value=trade_row["Date"],
+                    )
+                    shares = st.number_input(
+                        "Shares",
+                        min_value=0.01,
+                        value=float(trade_row["Shares"]),
+                        step=1.0,
+                        format="%.2f",
+                    )
+                    price = st.number_input(
+                        "Price",
+                        min_value=0.01,
+                        value=float(trade_row["Price"]),
+                        step=0.01,
+                        format="%.2f",
+                    )
+                    fees = st.number_input(
+                        "Fees",
+                        min_value=0.0,
+                        value=float(trade_row["Fees"]),
+                        step=0.01,
+                        format="%.2f",
+                    )
+
+                    col_a, col_b = st.columns(2)
+                    save = col_a.form_submit_button("Save Changes", type="primary")
+                    cancel = col_b.form_submit_button("Cancel")
+
+                if cancel:
+                    st.rerun()
+
+                if save:
+                    shares_changed = shares != float(trade_row["Shares"])
+                    price_changed = price != float(trade_row["Price"])
+                    fees_changed = fees != float(trade_row["Fees"])
+                    date_changed = trade_at != trade_row["Date"]
+
+                    if not any([shares_changed, price_changed, fees_changed, date_changed]):
+                        st.info("No changes detected")
+                        return
+
+                    result = update_trade(
+                        trade_id=int(trade_row["trade_id"]),
+                        shares=float(shares) if shares_changed else None,
+                        price=float(price) if price_changed else None,
+                        fees=float(fees) if fees_changed else None,
+                        trade_at=trade_at if date_changed else None,
+                    )
+
+                    if result.success:
+                        st.success(result.message)
+                        celebrate_and_rerun(msg="Updating trade...", animation=None, delay=1)
+                    else:
+                        st.error(result.message)
+
+            @st.dialog("Delete Trade")
+            def delete_trade_dialog(trade_row):
+                st.warning(
+                    f"**Are you sure you want to delete this trade?**\n\n"
+                    f"Trade #{int(trade_row['trade_id'])}: {trade_row['Ticker']} "
+                    f"{trade_row['Action']} {trade_row['Shares']} shares @ ${trade_row['Price']:.2f}"
+                )
+                st.caption(f"Date: {trade_row['Date']}")
+                
+                confirm = st.text_input('Type "DELETE" to confirm', value="")
+                col_a, col_b = st.columns(2)
+                do_delete = col_a.button(
+                    "Delete Trade",
+                    type="primary",
+                    disabled=(confirm != "DELETE"),
+                )
+                cancel = col_b.button("Cancel")
+
+                if cancel:
+                    st.rerun()
+
+                if do_delete:
+                    result = delete_trade(int(trade_row["trade_id"]))
+                    if result.success:
+                        st.success(result.message)
+                        celebrate_and_rerun(msg="Deleting trade...", animation=None, delay=1)
+                    else:
+                        st.error(result.message)
+
+            # Display trades as cards for better UX
             for trade in recent_trades:
                 ticker = trade.asset.ticker if trade.asset else "?"
                 trade_id = trade.id
                 is_editable = trade_id in editable_trade_ids
                 
-                trade_data.append({
-                    "trade_id": trade_id,
-                    "Date": trade.trade_at,
-                    "Ticker": ticker,
-                    "Action": trade.action.value,
-                    "Shares": trade.shares,
-                    "Price": trade.price,
-                    "Fees": trade.fees or 0.0,
-                    "Realized P&L": trade.realized_pnl or 0.0,
-                    "Editable": is_editable,
-                })
-            
-            trade_df = pd.DataFrame(trade_data)
-            
-            # Store original for comparison
-            if "trades_original_df" not in st.session_state:
-                st.session_state.trades_original_df = trade_df.copy()
-            
-            # Check if data has changed (e.g., new trades added)
-            current_ids = set(trade_df["trade_id"].tolist())
-            original_ids = set(st.session_state.trades_original_df["trade_id"].tolist())
-            if current_ids != original_ids:
-                st.session_state.trades_original_df = trade_df.copy()
-            
-            st.caption("💡 Only the latest trade per ticker can be edited or deleted.")
-            
-            # Configure column display
-            column_config = {
-                "trade_id": st.column_config.NumberColumn(
-                    "ID",
-                    help="Trade ID",
-                ),
-                "Date": st.column_config.DatetimeColumn(
-                    "Date",
-                    format="YYYY-MM-DD HH:mm:ss",
-                    help="Trade date and time",
-                ),
-                "Ticker": st.column_config.TextColumn(
-                    "Ticker",
-                    disabled=True,
-                ),
-                "Action": st.column_config.TextColumn(
-                    "Action",
-                    disabled=True,
-                ),
-                "Shares": st.column_config.NumberColumn(
-                    "Shares",
-                    format="%.2f",
-                    min_value=0.01,
-                    help="Number of shares",
-                ),
-                "Price": st.column_config.NumberColumn(
-                    "Price",
-                    format="$%.2f",
-                    min_value=0.01,
-                    help="Price per share",
-                ),
-                "Fees": st.column_config.NumberColumn(
-                    "Fees",
-                    format="$%.2f",
-                    min_value=0.0,
-                    help="Trading fees",
-                ),
-                "Realized P&L": st.column_config.NumberColumn(
-                    "Realized P&L",
-                    format="$%.2f",
-                    disabled=True,
-                    help="Auto-calculated after save",
-                ),
-            }
-            
-            # Editable data editor
-            edited_df = st.data_editor(
-                trade_df,
-                column_config=column_config,
-                disabled=["trade_id", "Date", "Ticker", "Action", "Realized P&L"],
-                hide_index=True,
-                use_container_width=True,
-                key="trades_editor",
-                column_order=[
-                    "trade_id",
-                    "Date",
-                    "Ticker",
-                    "Action",
-                    "Shares",
-                    "Price",
-                    "Fees",
-                    "Realized P&L",
-                ],
-            )
-            
-            # Action buttons
-            col_save, col_delete = st.columns([1, 1])
-            
-            with col_save:
-                if st.button("💾 Save Changes", type="primary", key="save_trades"):
-                    # Find edited rows
-                    original_df = st.session_state.trades_original_df
-                    changes_made = False
+                # Create a container for each trade
+                with st.container(border=True):
+                    # Use columns for layout: [Trade Info | Actions]
+                    col_info, col_actions = st.columns([5, 1])
                     
-                    for idx, row in edited_df.iterrows():
-                        trade_id = row["trade_id"]
-                        orig_row = original_df[original_df["trade_id"] == trade_id].iloc[0] if len(original_df[original_df["trade_id"] == trade_id]) > 0 else None
+                    with col_info:
+                        # Display trade details in a readable format
+                        date_str = trade.trade_at.strftime("%Y-%m-%d %H:%M:%S")
+                        action_emoji = "🟢" if trade.action.value == "BUY" else "🔴"
                         
-                        if orig_row is None:
-                            continue
-                        
-                        # Check if this trade is editable
-                        if not row["Editable"]:
-                            continue
-                        
-                        # Check for changes
-                        shares_changed = row["Shares"] != orig_row["Shares"]
-                        price_changed = row["Price"] != orig_row["Price"]
-                        fees_changed = row["Fees"] != orig_row["Fees"]
-                        date_changed = row["Date"] != orig_row["Date"]
-                        
-                        if shares_changed or price_changed or fees_changed or date_changed:
-                            # Update the trade
-                            result = update_trade(
-                                trade_id=int(trade_id),
-                                shares=float(row["Shares"]) if shares_changed else None,
-                                price=float(row["Price"]) if price_changed else None,
-                                fees=float(row["Fees"]) if fees_changed else None,
-                                trade_at=row["Date"] if date_changed else None,
-                            )
-                            
-                            if result.success:
-                                st.success(result.message)
-                                changes_made = True
-                            else:
-                                st.error(result.message)
+                        st.markdown(
+                            f"**{action_emoji} {ticker}** / {trade.action.value} / "
+                            f"{int(trade.shares)} shares @ \${trade.price:.2f} / "
+                            f"Fees: \${trade.fees or 0:.2f} / "
+                            f"P&L: \${trade.realized_pnl or 0:.2f}"
+                        )
+                        st.caption(f"ID: {trade_id} · {date_str}")
                     
-                    if changes_made:
-                        # Clear cached data and rerun
-                        if "trades_original_df" in st.session_state:
-                            del st.session_state.trades_original_df
-                        celebrate_and_rerun(msg="Updating trades...", animation=None, delay=1)
-                    elif not any(edited_df["Editable"]):
-                        st.warning("No editable trades selected")
-                    else:
-                        st.info("No changes detected")
-            
-            with col_delete:
-                # Delete button with confirmation
-                if "confirm_delete_trade" not in st.session_state:
-                    st.session_state.confirm_delete_trade = None
-                
-                # Select which trade to delete (only editable ones)
-                editable_trades = trade_df[trade_df["Editable"] == True]
-                if not editable_trades.empty:
-                    delete_options = {
-                        f"#{row['trade_id']} - {row['Ticker']} {row['Action']} {row['Shares']:.2f} @ ${row['Price']:.2f}": row['trade_id']
-                        for _, row in editable_trades.iterrows()
-                    }
+                    with col_actions:
+                        # Action buttons in a compact layout
+                        if is_editable:
+                            col_edit, col_delete = st.columns(2)
+                            with col_edit:
+                                if st.button("✏️", key=f"edit_{trade_id}", help="Edit trade"):
+                                    edit_trade_dialog({
+                                        "trade_id": trade_id,
+                                        "Date": trade.trade_at,
+                                        "Ticker": ticker,
+                                        "Action": trade.action.value,
+                                        "Shares": int(trade.shares),
+                                        "Price": trade.price,
+                                        "Fees": trade.fees or 0.0,
+                                    })
+                            with col_delete:
+                                if st.button("🗑️", key=f"delete_{trade_id}", help="Delete trade"):
+                                    delete_trade_dialog({
+                                        "trade_id": trade_id,
+                                        "Date": trade.trade_at,
+                                        "Ticker": ticker,
+                                        "Action": trade.action.value,
+                                        "Shares": int(trade.shares),
+                                        "Price": trade.price,
+                                        "Fees": trade.fees or 0.0,
+                                    })
+                        else:
+                            st.markdown("<div style='text-align: center; opacity: 0.3;'>🔒</div>", unsafe_allow_html=True)
                     
-                    selected_delete = st.selectbox(
-                        "Select trade to delete",
-                        options=[""] + list(delete_options.keys()),
-                        key="delete_trade_select",
-                        label_visibility="collapsed",
-                        placeholder="Select trade to delete...",
-                    )
-                    
-                    if selected_delete and selected_delete in delete_options:
-                        trade_id_to_delete = delete_options[selected_delete]
-                        
-                        if st.button("🗑️ Delete Selected", type="secondary", key="delete_trade_btn"):
-                            st.session_state.confirm_delete_trade = trade_id_to_delete
-                        
-                        if st.session_state.confirm_delete_trade == trade_id_to_delete:
-                            st.warning(f"⚠️ Are you sure you want to delete trade #{trade_id_to_delete}?")
-                            col_yes, col_no = st.columns(2)
-                            with col_yes:
-                                if st.button("✅ Yes, Delete", key="confirm_delete_yes"):
-                                    result = delete_trade(trade_id_to_delete)
-                                    if result.success:
-                                        st.success(result.message)
-                                        st.session_state.confirm_delete_trade = None
-                                        if "trades_original_df" in st.session_state:
-                                            del st.session_state.trades_original_df
-                                        celebrate_and_rerun(msg="Deleting trade...", animation=None, delay=1)
-                                    else:
-                                        st.error(result.message)
-                            with col_no:
-                                if st.button("❌ Cancel", key="confirm_delete_no"):
-                                    st.session_state.confirm_delete_trade = None
-                                    st.rerun()
         else:
             st.info("No trades yet")
 
