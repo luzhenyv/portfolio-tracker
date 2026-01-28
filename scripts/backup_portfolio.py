@@ -111,9 +111,9 @@ def export_to_csv(out_dir: str):
         trades_file = out_path / "trades.csv"
         with open(trades_file, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["id", "asset_id", "trade_date", "action", "shares", "price", "fees", "realized_pnl", "created_at"])
+            writer.writerow(["id", "asset_id", "trade_at", "action", "shares", "price", "fees", "realized_pnl", "created_at"])
             for t in trades:
-                writer.writerow([t.id, t.asset_id, t.trade_date, t.action, t.shares, t.price, t.fees, t.realized_pnl, t.created_at])
+                writer.writerow([t.id, t.asset_id, t.trade_at, t.action, t.shares, t.price, t.fees, t.realized_pnl, t.created_at])
         print(f"  - Written {len(trades)} trades to {trades_file}")
 
         # Export Cash Transactions
@@ -123,7 +123,7 @@ def export_to_csv(out_dir: str):
             writer = csv.writer(f)
             writer.writerow(["id", "date", "type", "amount", "asset_id", "trade_id", "description", "created_at"])
             for c in cash:
-                writer.writerow([c.id, c.transaction_date, c.transaction_type, c.amount, c.asset_id, c.trade_id, c.description, c.created_at])
+                writer.writerow([c.id, c.transaction_at, c.transaction_type, c.amount, c.asset_id, c.trade_id, c.description, c.created_at])
         print(f"  - Written {len(cash)} cash transactions to {cash_file}")
 
     print(f"✅ Export complete.")
@@ -180,7 +180,7 @@ def restore_from_csv(in_dir: str, db_url: str = None, fetch_valuations: bool = F
                     trade = Trade(
                         id=int(row["id"]),
                         asset_id=int(row["asset_id"]),
-                        trade_date=row["trade_date"],
+                        trade_at=row["trade_at"],
                         action=TradeAction(row["action"]),
                         shares=float(row["shares"]),
                         price=float(row["price"]),
@@ -200,7 +200,7 @@ def restore_from_csv(in_dir: str, db_url: str = None, fetch_valuations: bool = F
                 for row in reader:
                     cash = CashTransaction(
                         id=int(row["id"]),
-                        transaction_date=row["date"],
+                        transaction_at=row["date"],
                         transaction_type=CashTransactionType(row["type"]),
                         amount=float(row["amount"]),
                         asset_id=int(row["asset_id"]) if row["asset_id"] else None,
@@ -268,7 +268,7 @@ def rebuild_positions(db: DatabaseManager):
         
         for aid in asset_ids:
             # 1. Calculate long/short shares, avg cost, and realized_pnl by replaying trades
-            trades = session.query(Trade).filter(Trade.asset_id == aid).order_by(Trade.trade_date, Trade.id).all()
+            trades = session.query(Trade).filter(Trade.asset_id == aid).order_by(Trade.trade_at, Trade.id).all()
             
             position = Position(
                 asset_id=aid,

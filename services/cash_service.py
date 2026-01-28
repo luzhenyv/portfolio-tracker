@@ -15,25 +15,25 @@ def get_cash_balance() -> float:
         cash_repo = CashRepository(session)
         return cash_repo.get_balance()
 
-def deposit_cash(amount: float, transaction_date: str, description: str | None = None):
+def deposit_cash(amount: float, transaction_at: str, description: str | None = None):
     """Execute cash deposit."""
     db = get_db()
     with db.session() as session:
         cash_repo = CashRepository(session)
         return cash_repo.deposit(
             amount=amount,
-            transaction_date=transaction_date,
+            transaction_at=transaction_at,
             description=description,
         )
 
-def withdraw_cash(amount: float, transaction_date: str, description: str | None = None):
+def withdraw_cash(amount: float, transaction_at: str, description: str | None = None):
     """Execute cash withdrawal."""
     db = get_db()
     with db.session() as session:
         cash_repo = CashRepository(session)
         return cash_repo.withdraw(
             amount=amount,
-            transaction_date=transaction_date,
+            transaction_at=transaction_at,
             description=description,
         )
 

@@ -301,12 +301,12 @@ class PerformanceAnalyzer:
         """
         if not start_date:
             if trades:
-                start_date = trades[0].trade_date
+                start_date = trades[0].trade_at
             else:
                 # No trades - check cash transactions
                 cash_txns = cash_repo.list_all_chronological()
                 if cash_txns:
-                    start_date = cash_txns[0].transaction_date
+                    start_date = cash_txns[0].transaction_at
                 else:
                     return None, end_date or datetime.now().strftime("%Y-%m-%d")
 
@@ -588,9 +588,15 @@ class PerformanceAnalyzer:
                 pos["short"] = max(0.0, pos["short"] - trade.shares)
 
             # Record snapshot after this trade
+            # Convert trade_at to string date for grouping
+            if hasattr(trade.trade_at, 'strftime'):
+                trade_at_str = trade.trade_at.strftime("%Y-%m-%d")
+            else:
+                trade_at_str = str(trade.trade_at)[:10]
+            
             records.append(
                 (
-                    trade.trade_date,
+                    trade_at_str,
                     asset_id,
                     ticker,
                     pos["long"],
@@ -1020,7 +1026,7 @@ class PerformanceAnalyzer:
         # Check 2: Holdings on dividend date
         if shares <= 0:
             anomaly_list.append(
-                f"No holdings on {dividend.transaction_date} " f"(position: {shares:.2f} shares)"
+                f"No holdings on {dividend.transaction_at} " f"(position: {shares:.2f} shares)"
             )
 
         # Check 3: Implied yield
@@ -1102,12 +1108,12 @@ class PerformanceAnalyzer:
 
                         # Calculate position as of dividend date
                         shares = self._calculate_position_as_of(
-                            trade_repo, div.asset_id, div.transaction_date
+                            trade_repo, div.asset_id, div.transaction_at
                         )
 
                         # Lookup price on or before dividend date
                         price = self._lookup_price_on_or_before(
-                            price_repo, div.asset_id, div.transaction_date
+                            price_repo, div.asset_id, div.transaction_at
                         )
 
                         # Check for anomalies
@@ -1122,7 +1128,7 @@ class PerformanceAnalyzer:
                             "id": div.id,
                             "ticker": ticker,
                             "amount": div.amount,
-                            "date": div.transaction_date,
+                            "date": div.transaction_at,
                             "description": div.description,
                             "anomalies": anomaly_list,
                             "implied_yield": implied_yield,

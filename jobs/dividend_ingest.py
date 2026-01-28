@@ -52,7 +52,7 @@ class DividendRecord:
     """Dividend data for ingestion."""
     ticker: str
     amount: float
-    transaction_date: str
+    transaction_at: str
     description: str | None = None
 
 
@@ -62,7 +62,7 @@ class DividendIngestResult:
     success: bool
     ticker: str
     amount: float
-    transaction_date: str
+    transaction_at: str
     transaction_id: int | None
     is_duplicate: bool
     validation: DividendValidationResult
@@ -90,7 +90,7 @@ class DividendValidator:
         self,
         ticker: str,
         amount: float,
-        transaction_date: str,
+        transaction_at: str,
         asset_id: int | None = None,
     ) -> DividendValidationResult:
         """
@@ -99,7 +99,7 @@ class DividendValidator:
         Args:
             ticker: Asset ticker symbol
             amount: Dividend amount (should be positive)
-            transaction_date: Date in YYYY-MM-DD format
+            transaction_at: Date in YYYY-MM-DD format
             asset_id: Optional asset ID (will be looked up if not provided)
             
         Returns:
@@ -109,7 +109,7 @@ class DividendValidator:
         warnings = []
         
         # 1. Structural validation
-        structural = self._validate_structural(ticker, amount, transaction_date)
+        structural = self._validate_structural(ticker, amount, transaction_at)
         errors.extend(structural.errors)
         warnings.extend(structural.warnings)
         
@@ -138,13 +138,13 @@ class DividendValidator:
             asset_id = asset.id
             
             # 2. Holdings validation
-            holdings = self._validate_holdings(session, asset_id, transaction_date)
+            holdings = self._validate_holdings(session, asset_id, transaction_at)
             errors.extend(holdings.errors)
             warnings.extend(holdings.warnings)
             
             # 3. Magnitude validation
             magnitude = self._validate_magnitude(
-                session, asset_id, amount, transaction_date
+                session, asset_id, amount, transaction_at
             )
             # Magnitude issues are warnings only (don't block)
             warnings.extend(magnitude.warnings)
@@ -159,7 +159,7 @@ class DividendValidator:
         self,
         ticker: str,
         amount: float,
-        transaction_date: str,
+        transaction_at: str,
     ) -> DividendValidationResult:
         """Validate basic structure: amount > 0, valid date format."""
         errors = []
@@ -171,19 +171,19 @@ class DividendValidator:
         
         # Validate date format
         try:
-            date_obj = datetime.strptime(transaction_date, "%Y-%m-%d")
+            date_obj = datetime.strptime(transaction_at, "%Y-%m-%d")
             
             # Warn if date is in the future
             if date_obj.date() > datetime.now().date():
-                warnings.append(f"Dividend date {transaction_date} is in the future")
+                warnings.append(f"Dividend date {transaction_at} is in the future")
             
             # Warn if date is very old (> 5 years)
             five_years_ago = datetime.now() - timedelta(days=5 * 365)
             if date_obj < five_years_ago:
-                warnings.append(f"Dividend date {transaction_date} is more than 5 years ago")
+                warnings.append(f"Dividend date {transaction_at} is more than 5 years ago")
                 
         except ValueError:
-            errors.append(f"Invalid date format: {transaction_date} (expected YYYY-MM-DD)")
+            errors.append(f"Invalid date format: {transaction_at} (expected YYYY-MM-DD)")
         
         # Ticker should be non-empty
         if not ticker or not ticker.strip():
@@ -199,7 +199,7 @@ class DividendValidator:
         self,
         session,
         asset_id: int,
-        transaction_date: str,
+        transaction_at: str,
     ) -> DividendValidationResult:
         """
         Validate that we held shares around the dividend date.
@@ -215,12 +215,12 @@ class DividendValidator:
         # Get all trades for this asset up to dividend date
         trades = trade_repo.get_trades_for_asset(
             asset_id=asset_id,
-            end_date=transaction_date,
+            end_date=transaction_at,
         )
         
         if not trades:
             warnings.append(
-                f"No trade history found for asset before {transaction_date}. "
+                f"No trade history found for asset before {transaction_at}. "
                 "Cannot verify holdings."
             )
             return DividendValidationResult(
@@ -244,7 +244,7 @@ class DividendValidator:
         
         if shares <= 0:
             warnings.append(
-                f"Holdings on {transaction_date} appear to be {shares:.2f} shares. "
+                f"Holdings on {transaction_at} appear to be {shares:.2f} shares. "
                 "Verify this dividend is correct."
             )
         
@@ -259,7 +259,7 @@ class DividendValidator:
         session,
         asset_id: int,
         amount: float,
-        transaction_date: str,
+        transaction_at: str,
     ) -> DividendValidationResult:
         """
         Check if dividend amount is reasonable vs stock price.
@@ -273,22 +273,22 @@ class DividendValidator:
         # Get price around dividend date
         prices = price_repo.get_price_history(
             asset_id=asset_id,
-            start_date=transaction_date,
-            end_date=transaction_date,
+            start_date=transaction_at,
+            end_date=transaction_at,
         )
         
         if not prices:
             # Try to get closest price before dividend date
             all_prices = price_repo.get_price_history(
                 asset_id=asset_id,
-                end_date=transaction_date,
+                end_date=transaction_at,
             )
             if all_prices:
                 prices = [all_prices[-1]]  # Most recent before date
         
         if not prices:
             warnings.append(
-                f"No price data available around {transaction_date}. "
+                f"No price data available around {transaction_at}. "
                 "Cannot validate dividend magnitude."
             )
             return DividendValidationResult(
@@ -346,7 +346,7 @@ class DividendIngestor:
         self,
         ticker: str,
         amount: float,
-        transaction_date: str,
+        transaction_at: str,
         description: str | None = None,
         skip_validation: bool = False,
     ) -> DividendIngestResult:
@@ -356,7 +356,7 @@ class DividendIngestor:
         Args:
             ticker: Asset ticker symbol
             amount: Dividend amount (positive)
-            transaction_date: Date in YYYY-MM-DD format
+            transaction_at: Date in YYYY-MM-DD format
             description: Optional description
             skip_validation: Skip validation checks (not recommended)
             
@@ -370,14 +370,14 @@ class DividendIngestor:
         # Validate
         validation = DividendValidationResult(is_valid=True, warnings=[], errors=[])
         if not skip_validation:
-            validation = self.validator.validate(ticker, amount, transaction_date)
+            validation = self.validator.validate(ticker, amount, transaction_at)
             
             if not validation.is_valid:
                 return DividendIngestResult(
                     success=False,
                     ticker=ticker,
                     amount=amount,
-                    transaction_date=transaction_date,
+                    transaction_at=transaction_at,
                     transaction_id=None,
                     is_duplicate=False,
                     validation=validation,
@@ -396,7 +396,7 @@ class DividendIngestor:
                     success=False,
                     ticker=ticker,
                     amount=amount,
-                    transaction_date=transaction_date,
+                    transaction_at=transaction_at,
                     transaction_id=None,
                     is_duplicate=False,
                     validation=validation,
@@ -405,7 +405,7 @@ class DividendIngestor:
             
             # Check for duplicate
             is_dup, existing_id = self._check_duplicate(
-                session, asset.id, amount, transaction_date, description
+                session, asset.id, amount, transaction_at, description
             )
             
             if is_dup:
@@ -413,7 +413,7 @@ class DividendIngestor:
                     success=True,
                     ticker=ticker,
                     amount=amount,
-                    transaction_date=transaction_date,
+                    transaction_at=transaction_at,
                     transaction_id=existing_id,
                     is_duplicate=True,
                     validation=validation,
@@ -422,7 +422,7 @@ class DividendIngestor:
             
             # Create cash transaction
             tx = cash_repo.create_transaction(
-                transaction_date=transaction_date,
+                transaction_at=transaction_at,
                 transaction_type=CashTransactionType.DIVIDEND,
                 amount=amount,  # Positive for inflow
                 asset_id=asset.id,
@@ -439,7 +439,7 @@ class DividendIngestor:
                 success=True,
                 ticker=ticker,
                 amount=amount,
-                transaction_date=transaction_date,
+                transaction_at=transaction_at,
                 transaction_id=tx.id,
                 is_duplicate=False,
                 validation=validation,
@@ -451,13 +451,13 @@ class DividendIngestor:
         session,
         asset_id: int,
         amount: float,
-        transaction_date: str,
+        transaction_at: str,
         description: str | None,
     ) -> tuple[bool, int | None]:
         """
         Check if this dividend is already recorded.
         
-        Dedup strategy: asset_id + transaction_date + amount
+        Dedup strategy: asset_id + transaction_at + amount
         (description is optional in matching)
         """
         from sqlalchemy import select, and_
@@ -468,7 +468,7 @@ class DividendIngestor:
             .where(
                 and_(
                     CashTransaction.asset_id == asset_id,
-                    CashTransaction.transaction_date == transaction_date,
+                    CashTransaction.transaction_at == transaction_at,
                     CashTransaction.transaction_type == CashTransactionType.DIVIDEND,
                     CashTransaction.amount == amount,
                 )
@@ -502,7 +502,7 @@ class DividendIngestor:
             result = self.ingest_dividend(
                 ticker=div.ticker,
                 amount=div.amount,
-                transaction_date=div.transaction_date,
+                transaction_at=div.transaction_at,
                 description=div.description,
                 skip_validation=skip_validation,
             )
@@ -514,7 +514,7 @@ class DividendIngestor:
                     logger.info(f"↩️  {div.ticker}: Duplicate skipped")
                 else:
                     logger.info(
-                        f"✅ {div.ticker}: ${div.amount:.2f} on {div.transaction_date}"
+                        f"✅ {div.ticker}: ${div.amount:.2f} on {div.transaction_at}"
                     )
             else:
                 logger.error(f"❌ {div.ticker}: {result.message}")
@@ -527,7 +527,7 @@ def run_dividend_ingest(dividends: list[dict]) -> int:
     Entry point for dividend ingestion job.
     
     Args:
-        dividends: List of dicts with keys: ticker, amount, transaction_date, description
+        dividends: List of dicts with keys: ticker, amount, transaction_at, description
         
     Returns:
         Exit code (0 for success, 1 for errors)
@@ -540,7 +540,7 @@ def run_dividend_ingest(dividends: list[dict]) -> int:
         DividendRecord(
             ticker=d["ticker"],
             amount=d["amount"],
-            transaction_date=d["transaction_date"],
+            transaction_at=d["transaction_at"],
             description=d.get("description"),
         )
         for d in dividends
@@ -582,7 +582,7 @@ if __name__ == "__main__":
     result = run_dividend_ingest([{
         "ticker": ticker,
         "amount": amount,
-        "transaction_date": date,
+        "transaction_at": date,
         "description": description,
     }])
     

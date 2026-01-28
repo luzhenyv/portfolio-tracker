@@ -61,7 +61,7 @@ def create_sample_data():
             action=TradeAction.BUY,
             shares=trade_data["shares"],
             price=trade_data["price"],
-            trade_date=trade_data["date"],
+            trade_at=trade_data["date"],
         )
         if result.success:
             print(f"  Executed trade: {trade_data['ticker']} BUY {trade_data['shares']} @ ${trade_data['price']}")

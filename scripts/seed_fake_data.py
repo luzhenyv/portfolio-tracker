@@ -30,8 +30,8 @@ def seed_fake_data(db_url=None, if_drop=False):
     print("\n💵 Seeding cash transactions...")
     with db.session() as session:
         cash_repo = CashRepository(session)
-        cash_repo.deposit(100000.0, transaction_date="2025-01-01", description="Initial capital")
-        cash_repo.withdraw(500.0, transaction_date="2025-12-25", description="Personal expense")
+        cash_repo.deposit(100000.0, transaction_at="2025-01-01", description="Initial capital")
+        cash_repo.withdraw(500.0, transaction_at="2025-12-25", description="Personal expense")
     print("✅ Cash transactions seeded")
 
     # Seed assets
@@ -60,9 +60,9 @@ def seed_fake_data(db_url=None, if_drop=False):
     ]
     for action, ticker, shares, price, date in trades:
         if action == "buy":
-            result = buy_position(ticker=ticker, shares=shares, price=price, trade_date=date, fees=0.0)
+            result = buy_position(ticker=ticker, shares=shares, price=price, trade_at=date, fees=0.0)
         elif action == "sell":
-            result = sell_position(ticker=ticker, shares=shares, price=price, trade_date=date, fees=0.0)
+            result = sell_position(ticker=ticker, shares=shares, price=price, trade_at=date, fees=0.0)
         if result.success:
             print(f"✅ {action.upper()} {shares} {ticker} @ ${price}")
         else:

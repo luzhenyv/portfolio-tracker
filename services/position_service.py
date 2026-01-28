@@ -45,7 +45,7 @@ def execute_trade(
     action: TradeAction,
     shares: float,
     price: float,
-    trade_date: str | None = None,
+    trade_at: str | None = None,
     fees: float = 0.0,
 ) -> TradeResult:
     """
@@ -56,7 +56,7 @@ def execute_trade(
         action: Trade action (BUY/SELL/SHORT/COVER)
         shares: Number of shares (positive)
         price: Price per share
-        trade_date: Trade date in YYYY-MM-DD format (defaults to today)
+        trade_at: Trade date in YYYY-MM-DD format (defaults to today)
         fees: Trading fees (optional)
 
     Returns:
@@ -91,8 +91,8 @@ def execute_trade(
     status_changed = False
 
     # Default to today's date if not specified
-    if trade_date is None:
-        trade_date = datetime.now().strftime("%Y-%m-%d")
+    if trade_at is None:
+        trade_at = datetime.now().strftime("%Y-%m-%d")
 
     db = get_db()
 
@@ -196,7 +196,7 @@ def execute_trade(
             # Create trade record
             trade = trade_repo.create_trade(
                 asset_id=asset.id,
-                trade_date=trade_date,
+                trade_at=trade_at,
                 action=action,
                 shares=original_shares,
                 price=price,
@@ -269,7 +269,7 @@ def buy_position(
     ticker: str,
     shares: float,
     price: float,
-    trade_date: str | None = None,
+    trade_at: str | None = None,
     fees: float = 0.0,
 ) -> TradeResult:
     """
@@ -281,14 +281,14 @@ def buy_position(
     Example:
         >>> result = buy_position("AAPL", 100, 150.00, "2026-01-18")
     """
-    return execute_trade(ticker, TradeAction.BUY, shares, price, trade_date, fees)
+    return execute_trade(ticker, TradeAction.BUY, shares, price, trade_at, fees)
 
 
 def sell_position(
     ticker: str,
     shares: float,
     price: float,
-    trade_date: str | None = None,
+    trade_at: str | None = None,
     fees: float = 0.0,
 ) -> TradeResult:
     """
@@ -300,7 +300,7 @@ def sell_position(
     Example:
         >>> result = sell_position("NVDA", 10, 180.00, "2026-01-18")
     """
-    return execute_trade(ticker, TradeAction.SELL, shares, price, trade_date, fees)
+    return execute_trade(ticker, TradeAction.SELL, shares, price, trade_at, fees)
 
 
 def print_trade_result(result: TradeResult) -> None:
@@ -312,7 +312,13 @@ def print_trade_result(result: TradeResult) -> None:
     print(result.status_message)
 
     if result.success and result.trade:
-        print(f"   Date: {result.trade.trade_date}")
+        # Format trade_at - handle both datetime and string
+        trade_at = result.trade.trade_at
+        if hasattr(trade_at, 'strftime'):
+            date_str = trade_at.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            date_str = str(trade_at)
+        print(f"   Date: {date_str}")
         if result.trade.fees > 0:
             print(f"   Fees: ${result.trade.fees:.2f}")
 

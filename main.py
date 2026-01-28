@@ -89,7 +89,7 @@ def cmd_buy(args):
         ticker=args.ticker,
         shares=args.shares,
         price=args.price,
-        trade_date=args.date,
+        trade_at=args.date,
         fees=args.fees,
     )
     print_trade_result(result)
@@ -101,7 +101,7 @@ def cmd_sell(args):
         ticker=args.ticker,
         shares=args.shares,
         price=args.price,
-        trade_date=args.date,
+        trade_at=args.date,
         fees=args.fees,
     )
     print_trade_result(result)
@@ -245,14 +245,19 @@ def cmd_trades(args):
 
         print(f"\n💼 Trade History (last {len(trades)})")
         print("-" * 80)
-        print(f"{'Date':<12} {'Ticker':<8} {'Action':<8} {'Shares':>10} {'Price':>10} {'P&L':>12}")
+        print(f"{'Date':<20} {'Ticker':<8} {'Action':<8} {'Shares':>10} {'Price':>10} {'P&L':>12}")
         print("-" * 80)
 
         for trade in trades:
             ticker = trade.asset.ticker if trade.asset else "?"
             pnl_str = f"${trade.realized_pnl:+,.2f}" if trade.realized_pnl != 0 else "-"
+            # Format trade_at - handle both datetime and string
+            if hasattr(trade.trade_at, 'strftime'):
+                date_str = trade.trade_at.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                date_str = str(trade.trade_at)
             print(
-                f"{trade.trade_date:<12} {ticker:<8} {trade.action.value:<8} {trade.shares:>10.2f} ${trade.price:>9.2f} {pnl_str:>12}"
+                f"{date_str:<20} {ticker:<8} {trade.action.value:<8} {trade.shares:>10.2f} ${trade.price:>9.2f} {pnl_str:>12}"
             )
 
 
@@ -342,14 +347,14 @@ def cmd_cash_deposit(args):
 
         tx = cash_repo.deposit(
             amount=args.amount,
-            transaction_date=args.date,
+            transaction_at=args.date,
             description=args.description,
         )
 
         balance = cash_repo.get_balance()
 
     print(f"\n✅ Deposited ${args.amount:,.2f}")
-    print(f"   Date: {tx.transaction_date}")
+    print(f"   Date: {tx.transaction_at}")
     if args.description:
         print(f"   Description: {args.description}")
     print(f"   💵 New Balance: ${balance:,.2f}")
@@ -375,14 +380,14 @@ def cmd_cash_withdraw(args):
 
         tx = cash_repo.withdraw(
             amount=args.amount,
-            transaction_date=args.date,
+            transaction_at=args.date,
             description=args.description,
         )
 
         balance = cash_repo.get_balance()
 
     print(f"\n✅ Withdrew ${args.amount:,.2f}")
-    print(f"   Date: {tx.transaction_date}")
+    print(f"   Date: {tx.transaction_at}")
     if args.description:
         print(f"   Description: {args.description}")
     print(f"   💵 New Balance: ${balance:,.2f}")
