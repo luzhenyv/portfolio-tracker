@@ -762,10 +762,16 @@ class PerformanceAnalyzer:
             )
 
         # Create series and reindex
-        dates = pd.to_datetime(list(cash_by_date.keys()))
+        # NOTE: cash_by_date keys may include timestamps (e.g., "2025-02-14 09:30:50")
+        # Normalize to date-only to match the calendar index
+        dates = pd.to_datetime(list(cash_by_date.keys())).normalize()
         values = list(cash_by_date.values())
 
         cash_series = pd.Series(values, index=dates)
+        
+        # If there are multiple transactions on the same day, keep the last one (EOD balance)
+        cash_series = cash_series.groupby(cash_series.index).last()
+        
         cash_series = cash_series.reindex(calendar).ffill()
 
         # Fill dates before first transaction with initial balance
