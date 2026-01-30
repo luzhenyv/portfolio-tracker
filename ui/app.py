@@ -308,52 +308,47 @@ def render_overview_page():
             "1 Year": 365,
         }
         
-        # Layout: Controls on left, stats on right
-        controls_col, stats_col = st.columns([2, 1])
+        # Initialize session state for benchmarks and time horizon
+        if "selected_benchmarks" not in st.session_state:
+            # Default to S&P 500 if available
+            default_benchmarks = ["SPX"] if available_indices and any(idx.symbol == "SPX" for idx in available_indices) else []
+            st.session_state.selected_benchmarks = default_benchmarks
         
-        with controls_col:
-            # Benchmark selection (multiselect pills-style)
-            if available_indices:
-                benchmark_options = {idx.symbol: f"{idx.name} ({idx.symbol})" for idx in available_indices}
-                
-                # Initialize session state for selected benchmarks
-                if "selected_benchmarks" not in st.session_state:
-                    # Default to S&P 500 if available
-                    default_benchmarks = ["SPX"] if "SPX" in benchmark_options else []
-                    st.session_state.selected_benchmarks = default_benchmarks
-                
-                selected_benchmarks = st.multiselect(
-                    "Compare with Benchmarks",
-                    options=list(benchmark_options.keys()),
-                    default=st.session_state.selected_benchmarks,
-                    format_func=lambda x: benchmark_options.get(x, x),
-                    help="Select market indices to compare your portfolio performance against",
-                    key="benchmark_selector",
-                )
-                st.session_state.selected_benchmarks = selected_benchmarks
-            else:
-                st.caption("No benchmarks available. Add benchmarks in Admin → Benchmarks.")
-                selected_benchmarks = []
+        if "selected_horizon" not in st.session_state:
+            st.session_state.selected_horizon = "1 Year"
+        
+        # Benchmark selection (multiselect pills-style)
+        if available_indices:
+            benchmark_options = {idx.symbol: f"{idx.name} ({idx.symbol})" for idx in available_indices}
             
-            # Time horizon selection (pill-style buttons)
-            st.caption("Time Horizon")
-            horizon_cols = st.columns(len(time_horizons))
-            
-            # Initialize session state for time horizon
-            if "selected_horizon" not in st.session_state:
-                st.session_state.selected_horizon = "1 Year"
-            
-            for col, horizon_name in zip(horizon_cols, time_horizons.keys()):
-                with col:
-                    is_selected = st.session_state.selected_horizon == horizon_name
-                    if st.button(
-                        horizon_name,
-                        key=f"horizon_{horizon_name}",
-                        type="primary" if is_selected else "secondary",
-                        use_container_width=True,
-                    ):
-                        st.session_state.selected_horizon = horizon_name
-                        st.rerun()
+            selected_benchmarks = st.multiselect(
+                "Compare with Benchmarks",
+                options=list(benchmark_options.keys()),
+                default=st.session_state.selected_benchmarks,
+                format_func=lambda x: benchmark_options.get(x, x),
+                help="Select market indices to compare your portfolio performance against",
+                key="benchmark_selector",
+            )
+            st.session_state.selected_benchmarks = selected_benchmarks
+        else:
+            st.caption("No benchmarks available. Add benchmarks in Admin → Benchmarks.")
+            selected_benchmarks = []
+        
+        # Time horizon selection (pill-style buttons)
+        st.caption("Time Horizon")
+        horizon_cols = st.columns(len(time_horizons))
+        
+        for col, horizon_name in zip(horizon_cols, time_horizons.keys()):
+            with col:
+                is_selected = st.session_state.selected_horizon == horizon_name
+                if st.button(
+                    horizon_name,
+                    key=f"horizon_{horizon_name}",
+                    type="primary" if is_selected else "secondary",
+                    use_container_width=True,
+                ):
+                    st.session_state.selected_horizon = horizon_name
+                    st.rerun()
         
         # Get the lookback days for selected horizon
         lookback_days = time_horizons[st.session_state.selected_horizon]
@@ -392,9 +387,6 @@ def render_overview_page():
             })
             chart_data["Date"] = pd.to_datetime(chart_data["Date"])
             
-            # Track best/worst performers
-            performance_summary = {"Portfolio": normalized_nav[-1] - 1.0 if normalized_nav else 0}
-            
             # Fetch and add benchmark data
             if selected_benchmarks:
                 benchmark_data = get_benchmark_comparison_data(
@@ -413,10 +405,6 @@ def render_overview_page():
                         
                         # Merge with chart data
                         chart_data = chart_data.merge(bench_df, on="Date", how="outer")
-                        
-                        # Track performance
-                        if series.total_return is not None:
-                            performance_summary[symbol] = series.total_return
             
             # Sort by date and forward-fill missing values
             chart_data = chart_data.sort_values("Date")
@@ -449,14 +437,17 @@ def render_overview_page():
             )
             
             fig.update_traces(
-                line_width=2,
                 hovertemplate="<b>%{fullData.name}</b><br>Date: %{x}<br>Value: %{y:.2f}<extra></extra>",
             )
             
-            # Make Portfolio line thicker/prominent
+            # Make Portfolio line thick solid, benchmark lines dashed
             for trace in fig.data:
                 if trace.name == "Portfolio":
                     trace.line.width = 3
+                    trace.line.dash = "solid"
+                else:
+                    trace.line.width = 2
+                    trace.line.dash = "dash"
             
             fig.update_layout(
                 hovermode="x unified",
@@ -483,33 +474,6 @@ def render_overview_page():
             )
             
             st.plotly_chart(fig, use_container_width=True)
-            
-            # Show best/worst performers
-            with stats_col:
-                if len(performance_summary) > 0:
-                    sorted_perf = sorted(
-                        performance_summary.items(),
-                        key=lambda x: x[1] if x[1] is not None else float('-inf'),
-                        reverse=True,
-                    )
-                    
-                    if sorted_perf:
-                        best_name, best_ret = sorted_perf[0]
-                        worst_name, worst_ret = sorted_perf[-1]
-                        
-                        st.markdown("##### Best Performer")
-                        st.markdown(f"**{best_name}**")
-                        if best_ret is not None:
-                            color = "green" if best_ret >= 0 else "red"
-                            st.markdown(f":{color}[↑ {best_ret:.1%}]" if best_ret >= 0 else f":{color}[↓ {best_ret:.1%}]")
-                        
-                        if len(sorted_perf) > 1:
-                            st.markdown("")
-                            st.markdown("##### Worst Performer")
-                            st.markdown(f"**{worst_name}**")
-                            if worst_ret is not None:
-                                color = "green" if worst_ret >= 0 else "red"
-                                st.markdown(f":{color}[↑ {worst_ret:.1%}]" if worst_ret >= 0 else f":{color}[↓ {worst_ret:.1%}]")
         else:
             st.info("No NAV history available. Add trades or cash transactions to see chart.")
     except Exception as e:
