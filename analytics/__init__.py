@@ -37,6 +37,16 @@ from analytics.performance import (
     compute_performance_metrics,
     get_period_returns,
 )
+from analytics.benchmark import (
+    BenchmarkAnalyzer,
+    BenchmarkMetrics,
+    BenchmarkComparisonResult,
+    CorrelationMatrix,
+    RollingBetaResult,
+    compute_benchmark_comparison,
+    compute_beta,
+    compute_correlation,
+)
 
 __all__ = [
     # Portfolio
@@ -67,4 +77,13 @@ __all__ = [
     "AssetPerformance",
     "compute_performance_metrics",
     "get_period_returns",
+    # Benchmark
+    "BenchmarkAnalyzer",
+    "BenchmarkMetrics",
+    "BenchmarkComparisonResult",
+    "CorrelationMatrix",
+    "RollingBetaResult",
+    "compute_benchmark_comparison",
+    "compute_beta",
+    "compute_correlation",
 ]
