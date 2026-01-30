@@ -34,6 +34,10 @@ from db.session import (
     get_db,
     init_db,
 )
+from db.repositories import (
+    MarketIndexRepository,
+    IndexPriceRepository,
+)
 
 __all__ = [
     # Models
@@ -63,4 +67,7 @@ __all__ = [
     "DatabaseManager",
     "get_db",
     "init_db",
+    # Repositories
+    "MarketIndexRepository",
+    "IndexPriceRepository",
 ]

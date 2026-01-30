@@ -10,9 +10,7 @@ Provides portfolio vs benchmark comparison metrics:
 Designed to work with market indices stored in the database.
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Literal, Sequence
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
