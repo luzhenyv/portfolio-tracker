@@ -317,41 +317,9 @@ def render_overview_page():
         if "selected_horizon" not in st.session_state:
             st.session_state.selected_horizon = "1 Year"
         
-        # Benchmark selection (multiselect pills-style)
-        if available_indices:
-            benchmark_options = {idx.symbol: f"{idx.name} ({idx.symbol})" for idx in available_indices}
-            
-            selected_benchmarks = st.multiselect(
-                "Compare with Benchmarks",
-                options=list(benchmark_options.keys()),
-                default=st.session_state.selected_benchmarks,
-                format_func=lambda x: benchmark_options.get(x, x),
-                help="Select market indices to compare your portfolio performance against",
-                key="benchmark_selector",
-            )
-            st.session_state.selected_benchmarks = selected_benchmarks
-        else:
-            st.caption("No benchmarks available. Add benchmarks in Admin → Benchmarks.")
-            selected_benchmarks = []
-        
-        # Time horizon selection (pill-style buttons)
-        st.caption("Time Horizon")
-        horizon_cols = st.columns(len(time_horizons))
-        
-        for col, horizon_name in zip(horizon_cols, time_horizons.keys()):
-            with col:
-                is_selected = st.session_state.selected_horizon == horizon_name
-                if st.button(
-                    horizon_name,
-                    key=f"horizon_{horizon_name}",
-                    type="primary" if is_selected else "secondary",
-                    use_container_width=True,
-                ):
-                    st.session_state.selected_horizon = horizon_name
-                    st.rerun()
-        
         # Get the lookback days for selected horizon
         lookback_days = time_horizons[st.session_state.selected_horizon]
+        selected_benchmarks = st.session_state.selected_benchmarks
         
         # Fetch NAV data for the selected time horizon
         nav_series = get_nav_series(lookback_days=lookback_days)
@@ -476,6 +444,41 @@ def render_overview_page():
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No NAV history available. Add trades or cash transactions to see chart.")
+        
+        # Benchmark selection (multiselect pills-style) - moved below chart
+        st.markdown("")
+        if available_indices:
+            benchmark_options = {idx.symbol: f"{idx.name} ({idx.symbol})" for idx in available_indices}
+            
+            selected_benchmarks_new = st.multiselect(
+                "Compare with Benchmarks",
+                options=list(benchmark_options.keys()),
+                default=st.session_state.selected_benchmarks,
+                format_func=lambda x: benchmark_options.get(x, x),
+                help="Select market indices to compare your portfolio performance against",
+                key="benchmark_selector",
+            )
+            if selected_benchmarks_new != st.session_state.selected_benchmarks:
+                st.session_state.selected_benchmarks = selected_benchmarks_new
+                st.rerun()
+        else:
+            st.caption("No benchmarks available. Add benchmarks in Admin → Benchmarks.")
+        
+        # Time horizon selection (pill-style buttons) - moved below chart
+        st.caption("Time Horizon")
+        horizon_cols = st.columns(len(time_horizons))
+        
+        for col, horizon_name in zip(horizon_cols, time_horizons.keys()):
+            with col:
+                is_selected = st.session_state.selected_horizon == horizon_name
+                if st.button(
+                    horizon_name,
+                    key=f"horizon_{horizon_name}",
+                    type="primary" if is_selected else "secondary",
+                    use_container_width=True,
+                ):
+                    st.session_state.selected_horizon = horizon_name
+                    st.rerun()
     except Exception as e:
         st.caption(f"Period returns unavailable: {e}")
         import traceback
