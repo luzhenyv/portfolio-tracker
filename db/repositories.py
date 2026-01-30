@@ -1987,3 +1987,239 @@ class NoteRepository:
         self.session.flush()
         return True
 
+
+class MarketIndexRepository:
+    """Repository for MarketIndex operations."""
+    
+    def __init__(self, session: Session):
+        self.session = session
+    
+    def get_by_id(self, index_id: int) -> "MarketIndex | None":
+        """Get market index by ID."""
+        from db.models import MarketIndex
+        return self.session.get(MarketIndex, index_id)
+    
+    def get_by_symbol(self, symbol: str) -> "MarketIndex | None":
+        """Get market index by symbol."""
+        from db.models import MarketIndex
+        stmt = select(MarketIndex).where(MarketIndex.symbol == symbol.upper())
+        return self.session.scalar(stmt)
+    
+    def get_all(self) -> "Sequence[MarketIndex]":
+        """Get all market indices."""
+        from db.models import MarketIndex
+        stmt = select(MarketIndex).order_by(MarketIndex.symbol)
+        return self.session.scalars(stmt).all()
+    
+    def get_by_category(self, category: str) -> "Sequence[MarketIndex]":
+        """Get indices filtered by category."""
+        from db.models import MarketIndex, IndexCategory
+        stmt = select(MarketIndex).where(MarketIndex.category == category).order_by(MarketIndex.symbol)
+        return self.session.scalars(stmt).all()
+    
+    def create(
+        self,
+        symbol: str,
+        name: str,
+        description: str | None = None,
+        category: str = "EQUITY",
+    ) -> "MarketIndex":
+        """Create a new market index."""
+        from db.models import MarketIndex, IndexCategory
+        index = MarketIndex(
+            symbol=symbol.upper(),
+            name=name,
+            description=description,
+            category=IndexCategory(category),
+        )
+        self.session.add(index)
+        self.session.flush()
+        return index
+    
+    def get_or_create(
+        self,
+        symbol: str,
+        name: str,
+        **kwargs,
+    ) -> tuple["MarketIndex", bool]:
+        """
+        Get existing index or create new one.
+        
+        Returns:
+            Tuple of (index, created) where created is True if new.
+        """
+        index = self.get_by_symbol(symbol)
+        if index:
+            return index, False
+        return self.create(symbol=symbol, name=name, **kwargs), True
+
+
+class IndexPriceRepository:
+    """Repository for index price data operations."""
+    
+    def __init__(self, session: Session):
+        self.session = session
+    
+    def get_latest_date(self, index_id: int) -> str | None:
+        """Get the most recent price date for an index."""
+        from db.models import IndexPriceDaily
+        stmt = (
+            select(func.max(IndexPriceDaily.date))
+            .where(IndexPriceDaily.index_id == index_id)
+        )
+        return self.session.scalar(stmt)
+    
+    def get_latest_price(self, index_id: int) -> "IndexPriceDaily | None":
+        """Get the most recent price record for an index."""
+        from db.models import IndexPriceDaily
+        latest_date = self.get_latest_date(index_id)
+        if not latest_date:
+            return None
+        
+        stmt = (
+            select(IndexPriceDaily)
+            .where(IndexPriceDaily.index_id == index_id, IndexPriceDaily.date == latest_date)
+        )
+        return self.session.scalar(stmt)
+    
+    def get_price_history(
+        self,
+        index_id: int,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> "Sequence[IndexPriceDaily]":
+        """Get price history for an index within date range."""
+        from db.models import IndexPriceDaily
+        stmt = select(IndexPriceDaily).where(IndexPriceDaily.index_id == index_id)
+        
+        if start_date:
+            stmt = stmt.where(IndexPriceDaily.date >= start_date)
+        if end_date:
+            stmt = stmt.where(IndexPriceDaily.date <= end_date)
+        
+        stmt = stmt.order_by(IndexPriceDaily.date)
+        return self.session.scalars(stmt).all()
+    
+    def get_price_history_for_indices(
+        self,
+        index_ids: list[int] | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[dict]:
+        """
+        Get price history for multiple indices.
+        
+        Returns:
+            List of dicts with [date, index_id, symbol, close].
+        """
+        from db.models import IndexPriceDaily, MarketIndex
+        stmt = (
+            select(
+                IndexPriceDaily.date,
+                IndexPriceDaily.index_id,
+                MarketIndex.symbol,
+                IndexPriceDaily.close,
+            )
+            .join(MarketIndex, IndexPriceDaily.index_id == MarketIndex.id)
+            .where(IndexPriceDaily.close.is_not(None))
+        )
+        
+        if index_ids:
+            stmt = stmt.where(IndexPriceDaily.index_id.in_(index_ids))
+        if start_date:
+            stmt = stmt.where(IndexPriceDaily.date >= start_date)
+        if end_date:
+            stmt = stmt.where(IndexPriceDaily.date <= end_date)
+        
+        stmt = stmt.order_by(IndexPriceDaily.date)
+        
+        results = self.session.execute(stmt).all()
+        return [
+            {
+                "date": r.date,
+                "index_id": r.index_id,
+                "symbol": r.symbol,
+                "close": r.close,
+            }
+            for r in results
+        ]
+    
+    def bulk_upsert_prices(
+        self,
+        index_id: int,
+        price_records: list[dict],
+    ) -> int:
+        """
+        Bulk insert/update price records (idempotent).
+        
+        Args:
+            index_id: Index ID for the prices.
+            price_records: List of dicts with date, open, high, low, close, etc.
+            
+        Returns:
+            Number of records inserted.
+        """
+        from db.models import IndexPriceDaily
+        count = 0
+        for record in price_records:
+            # Check if exists
+            stmt = select(IndexPriceDaily).where(
+                IndexPriceDaily.index_id == index_id,
+                IndexPriceDaily.date == record["date"],
+            )
+            existing = self.session.scalar(stmt)
+            
+            if not existing:
+                price = IndexPriceDaily(
+                    index_id=index_id,
+                    date=record["date"],
+                    open=record.get("open"),
+                    high=record.get("high"),
+                    low=record.get("low"),
+                    close=record.get("close"),
+                    volume=record.get("volume"),
+                )
+                self.session.add(price)
+                count += 1
+        
+        self.session.flush()
+        return count
+    
+    def get_latest_prices_for_indices(
+        self,
+        index_ids: list[int] | None = None,
+    ) -> dict[int, "IndexPriceDaily"]:
+        """
+        Get latest price for multiple indices.
+        
+        Returns:
+            Dict mapping index_id to latest IndexPriceDaily.
+        """
+        from db.models import IndexPriceDaily
+        # Subquery to get max date per index
+        subq = (
+            select(
+                IndexPriceDaily.index_id,
+                func.max(IndexPriceDaily.date).label("max_date"),
+            )
+            .group_by(IndexPriceDaily.index_id)
+        )
+        
+        if index_ids:
+            subq = subq.where(IndexPriceDaily.index_id.in_(index_ids))
+        
+        subq = subq.subquery()
+        
+        # Main query joining with subquery
+        stmt = (
+            select(IndexPriceDaily)
+            .join(
+                subq,
+                (IndexPriceDaily.index_id == subq.c.index_id) &
+                (IndexPriceDaily.date == subq.c.max_date)
+            )
+        )
+        
+        prices = self.session.scalars(stmt).all()
+        return {p.index_id: p for p in prices}
+

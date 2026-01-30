@@ -4,7 +4,8 @@ Daily Update Job Runner.
 Coordinates the daily data refresh workflow:
 1. Fetch EOD prices for all assets
 2. Fetch valuation metrics for all assets
-3. Report status
+3. Fetch EOD prices for market indices
+4. Report status
 
 FR-1: Idempotent daily execution
 FR-2: Must not crash on missing data
@@ -16,7 +17,7 @@ from datetime import datetime
 from typing import NamedTuple
 
 from db import init_db
-from data.yfinance_fetcher import PriceFetcher, ValuationFetcher, FetchResult
+from data.yfinance_fetcher import PriceFetcher, ValuationFetcher, IndexPriceFetcher, FetchResult
 
 
 logging.basicConfig(
@@ -47,6 +48,7 @@ class DailyUpdateJob:
     def __init__(self):
         self.price_fetcher = PriceFetcher()
         self.valuation_fetcher = ValuationFetcher()
+        self.index_fetcher = IndexPriceFetcher()
     
     def _summarize_results(
         self,
@@ -105,6 +107,26 @@ class DailyUpdateJob:
         
         return summary
     
+    def run_index_update(self) -> JobResult:
+        """
+        Run market index price update for all tracked indices.
+        
+        Returns:
+            JobResult with summary.
+        """
+        logger.info("📉 Starting index price update...")
+        
+        results = self.index_fetcher.fetch_all_indices()
+        summary = self._summarize_results(results, "Index Update")
+        
+        logger.info(
+            f"📉 Index update complete: "
+            f"{summary.successful_assets}/{summary.total_assets} indices, "
+            f"{summary.total_records} new records"
+        )
+        
+        return summary
+    
     def run_full_update(self) -> dict[str, JobResult]:
         """
         Run complete daily update workflow.
@@ -126,6 +148,9 @@ class DailyUpdateJob:
         
         # Run valuation update
         results["valuations"] = self.run_valuation_update()
+        
+        # Run index update
+        results["indices"] = self.run_index_update()
         
         # Summary
         logger.info("=" * 50)
@@ -173,6 +198,14 @@ def run_valuations_only():
     return 0 if result.success else 1
 
 
+def run_indices_only():
+    """Entry point for index-only update."""
+    init_db()
+    job = DailyUpdateJob()
+    result = job.run_index_update()
+    return 0 if result.success else 1
+
+
 if __name__ == "__main__":
     # Check for command line arguments
     if len(sys.argv) > 1:
@@ -181,9 +214,11 @@ if __name__ == "__main__":
             sys.exit(run_prices_only())
         elif command == "valuations":
             sys.exit(run_valuations_only())
+        elif command == "indices":
+            sys.exit(run_indices_only())
         else:
             print(f"Unknown command: {command}")
-            print("Usage: python -m jobs.daily_update [prices|valuations]")
+            print("Usage: python -m jobs.daily_update [prices|valuations|indices]")
             sys.exit(1)
     else:
         sys.exit(run_daily_update())

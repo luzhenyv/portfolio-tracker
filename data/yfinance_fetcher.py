@@ -400,5 +400,218 @@ def fetch_valuations_main():
     print(f"   Assets: {success_count}/{len(results)} successful")
 
 
+class IndexPriceFetcher:
+    """
+    Fetches EOD price data for market indices from Yahoo Finance.
+    
+    Supports major indices like S&P 500 (^GSPC), Russell 2000 (^RUT), etc.
+    Idempotent execution - safe to run daily.
+    """
+    
+    def __init__(self):
+        self.config = config.data_fetcher
+    
+    def fetch_for_index(
+        self,
+        symbol: str,
+        start_date: str | None = None,
+    ) -> FetchResult:
+        """
+        Fetch prices for a single market index.
+        
+        Args:
+            symbol: Yahoo Finance symbol (e.g., ^GSPC, ^RUT).
+            start_date: Optional start date (YYYY-MM-DD). 
+                       If None, uses default lookback period.
+                       
+        Returns:
+            FetchResult with operation status and records.
+        """
+        logger.info(f"📥 Fetching index prices for {symbol}")
+        
+        try:
+            # Fetch data from Yahoo Finance
+            df = yf.download(
+                symbol,
+                start=start_date,
+                progress=False,
+                auto_adjust=False,
+                timeout=self.config.yfinance_timeout,
+            )
+            
+            if df.empty:
+                logger.warning(f"⚠️ No data returned for index {symbol}")
+                return FetchResult(
+                    ticker=symbol,
+                    success=True,
+                    records_count=0,
+                    message="No data available",
+                )
+            
+            # Convert to records (reuse PriceFetcher logic)
+            records = self._dataframe_to_records(df)
+            
+            logger.info(f"✅ Fetched {len(records)} records for index {symbol}")
+            return FetchResult(
+                ticker=symbol,
+                success=True,
+                records_count=len(records),
+                records=records,
+                message=f"Fetched {len(records)} records",
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch index {symbol}: {e}")
+            return FetchResult(
+                ticker=symbol,
+                success=False,
+                message=str(e),
+            )
+    
+    def _dataframe_to_records(self, df: pd.DataFrame) -> list[dict]:
+        """Convert yfinance DataFrame to list of dicts."""
+        df = df.reset_index()
+        
+        # Handle multi-level columns from yfinance
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        
+        records = []
+        for _, row in df.iterrows():
+            # Handle date format
+            date_val = row.get("Date") or row.get("index")
+            if hasattr(date_val, "strftime"):
+                date_str = date_val.strftime("%Y-%m-%d")
+            else:
+                date_str = str(date_val)[:10]
+            
+            records.append({
+                "date": date_str,
+                "open": self._safe_float(row.get("Open")),
+                "high": self._safe_float(row.get("High")),
+                "low": self._safe_float(row.get("Low")),
+                "close": self._safe_float(row.get("Close")),
+                "volume": self._safe_int(row.get("Volume")),
+            })
+        
+        return records
+    
+    @staticmethod
+    def _safe_float(value: Any) -> float | None:
+        """Safely convert to float, returning None for invalid values."""
+        if value is None or pd.isna(value):
+            return None
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+    
+    @staticmethod
+    def _safe_int(value: Any) -> int | None:
+        """Safely convert to int, returning None for invalid values."""
+        if value is None or pd.isna(value):
+            return None
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return None
+    
+    def fetch_all_indices(self) -> list[FetchResult]:
+        """
+        Fetch prices for all market indices in the database.
+        
+        Returns:
+            List of FetchResult for each index.
+        """
+        from db import get_db
+        from db.repositories import MarketIndexRepository, IndexPriceRepository
+        
+        db = get_db()
+        results = []
+        
+        with db.session() as session:
+            index_repo = MarketIndexRepository(session)
+            price_repo = IndexPriceRepository(session)
+            
+            indices = index_repo.get_all()
+            
+            for index in indices:
+                # Get the Yahoo Finance symbol from config if available
+                yahoo_symbol = self._get_yahoo_symbol(index.symbol)
+                
+                # Determine start date
+                latest_price = price_repo.get_latest_price(index.id)
+                
+                if latest_price:
+                    # Fetch from day after last price
+                    start_dt = datetime.strptime(latest_price.date, "%Y-%m-%d") + timedelta(days=1)
+                    start_date = start_dt.strftime("%Y-%m-%d")
+                else:
+                    # Initial fetch - use default lookback
+                    start_dt = datetime.now() - timedelta(days=config.data_fetcher.default_lookback_days)
+                    start_date = start_dt.strftime("%Y-%m-%d")
+                
+                # Fetch prices using Yahoo Finance symbol
+                fetch_result = self.fetch_for_index(yahoo_symbol, start_date)
+                
+                # Update the ticker in result to match our symbol
+                fetch_result = FetchResult(
+                    ticker=index.symbol,
+                    success=fetch_result.success,
+                    records_count=fetch_result.records_count,
+                    records=fetch_result.records,
+                    message=fetch_result.message,
+                )
+                
+                # Save records if successful
+                if fetch_result.success and fetch_result.records:
+                    count = price_repo.bulk_upsert_prices(index.id, fetch_result.records)
+                    fetch_result = FetchResult(
+                        ticker=index.symbol,
+                        success=True,
+                        records_count=count,
+                        message=f"Stored {count} records",
+                    )
+                
+                results.append(fetch_result)
+                
+                # Rate limiting
+                time.sleep(self.config.request_delay)
+        
+        return results
+    
+    def _get_yahoo_symbol(self, symbol: str) -> str:
+        """
+        Get the Yahoo Finance symbol for a given index symbol.
+        
+        Uses config.market_indices if available, otherwise returns symbol as-is.
+        """
+        try:
+            for index_config in config.market_indices.tracked_indices:
+                if index_config.symbol == symbol:
+                    return index_config.sources.get("yahoo", symbol)
+        except AttributeError:
+            pass
+        return symbol
+
+
+def fetch_index_prices_main():
+    """Entry point for index price fetching."""
+    from db import init_db
+    
+    logging.basicConfig(level=logging.INFO)
+    init_db()
+    
+    fetcher = IndexPriceFetcher()
+    results = fetcher.fetch_all_indices()
+    
+    success_count = sum(1 for r in results if r.success)
+    total_records = sum(r.records_count for r in results)
+    
+    print(f"\n📈 Index Price Fetch Complete")
+    print(f"   Indices: {success_count}/{len(results)} successful")
+    print(f"   Records: {total_records} new prices stored")
+
+
 if __name__ == "__main__":
     fetch_prices_main()

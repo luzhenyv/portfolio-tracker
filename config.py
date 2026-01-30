@@ -42,6 +42,142 @@ class DataFetcherConfig:
 
 
 @dataclass(frozen=True)
+class IndexConfig:
+    """
+    Configuration for a single market index with multi-source symbol mapping.
+    
+    Supports different symbols across data providers:
+    - yahoo: Yahoo Finance symbol (e.g., ^GSPC, ^RUT)
+    - alpha_vantage: Alpha Vantage symbol
+    - finviz: Finviz symbol
+    - other providers can be added as needed
+    """
+    symbol: str  # Internal canonical symbol (e.g., SPX, RUT)
+    name: str  # Human-readable name
+    description: str = ""
+    category: str = "EQUITY"  # EQUITY, VOLATILITY, COMMODITY, BOND, CURRENCY
+    sources: dict = field(default_factory=dict)  # Provider -> symbol mapping
+    
+    def get_symbol(self, provider: str) -> str:
+        """Get the symbol for a specific data provider, falling back to canonical symbol."""
+        return self.sources.get(provider, self.symbol)
+
+
+@dataclass(frozen=True)
+class MarketIndicesConfig:
+    """
+    Configuration for market benchmark indices.
+    
+    Centralizes index tracking with multi-source symbol mapping.
+    Each index can have different symbols across data providers.
+    
+    Example usage:
+        config.market_indices.get_index("SPX")
+        config.market_indices.get_yahoo_symbol("SPX")  # Returns "^GSPC"
+    """
+    tracked_indices: tuple[IndexConfig, ...] = field(default_factory=lambda: (
+        IndexConfig(
+            symbol="SPX",
+            name="S&P 500",
+            description="Large-cap US equity market benchmark tracking 500 leading companies",
+            category="EQUITY",
+            sources={
+                "yahoo": "^GSPC",
+                "alpha_vantage": "SPX",
+                "finviz": "SPX",
+            },
+        ),
+        IndexConfig(
+            symbol="RUT",
+            name="Russell 2000",
+            description="Small-cap US equity market benchmark tracking 2000 small companies",
+            category="EQUITY",
+            sources={
+                "yahoo": "^RUT",
+                "alpha_vantage": "RUT",
+                "finviz": "RUT",
+            },
+        ),
+        IndexConfig(
+            symbol="VIX",
+            name="CBOE Volatility Index",
+            description="Market volatility expectation derived from S&P 500 options",
+            category="VOLATILITY",
+            sources={
+                "yahoo": "^VIX",
+                "alpha_vantage": "VIX",
+                "finviz": "VIX",
+            },
+        ),
+        IndexConfig(
+            symbol="DJI",
+            name="Dow Jones Industrial Average",
+            description="Price-weighted index of 30 large-cap US blue-chip companies",
+            category="EQUITY",
+            sources={
+                "yahoo": "^DJI",
+                "alpha_vantage": "DJI",
+                "finviz": "DJI",
+            },
+        ),
+        IndexConfig(
+            symbol="IXIC",
+            name="NASDAQ Composite",
+            description="Tech-heavy index tracking all NASDAQ-listed stocks",
+            category="EQUITY",
+            sources={
+                "yahoo": "^IXIC",
+                "alpha_vantage": "IXIC",
+                "finviz": "IXIC",
+            },
+        ),
+        IndexConfig(
+            symbol="GOLD",
+            name="Gold Futures",
+            description="Gold commodity price benchmark",
+            category="COMMODITY",
+            sources={
+                "yahoo": "GC=F",
+                "alpha_vantage": "GOLD",
+                "finviz": "GC",
+            },
+        ),
+    ))
+    
+    def get_index(self, symbol: str) -> IndexConfig | None:
+        """Get index configuration by canonical symbol."""
+        for idx in self.tracked_indices:
+            if idx.symbol == symbol:
+                return idx
+        return None
+    
+    def get_yahoo_symbol(self, symbol: str) -> str:
+        """Get Yahoo Finance symbol for an index."""
+        idx = self.get_index(symbol)
+        return idx.get_symbol("yahoo") if idx else symbol
+    
+    def get_alpha_vantage_symbol(self, symbol: str) -> str:
+        """Get Alpha Vantage symbol for an index."""
+        idx = self.get_index(symbol)
+        return idx.get_symbol("alpha_vantage") if idx else symbol
+    
+    def get_finviz_symbol(self, symbol: str) -> str:
+        """Get Finviz symbol for an index."""
+        idx = self.get_index(symbol)
+        return idx.get_symbol("finviz") if idx else symbol
+    
+    @property
+    def symbols(self) -> list[str]:
+        """Get list of all tracked index symbols."""
+        return [idx.symbol for idx in self.tracked_indices]
+    
+    @property
+    def equity_indices(self) -> list[IndexConfig]:
+        """Get all equity indices."""
+        return [idx for idx in self.tracked_indices if idx.category == "EQUITY"]
+
+
+@dataclass(frozen=True)
 class RiskConfig:
     """Risk analytics configuration."""
     # Annualization factor (trading days per year)
@@ -107,6 +243,7 @@ class Config:
     risk: RiskConfig = field(default_factory=RiskConfig)
     decision: DecisionConfig = field(default_factory=DecisionConfig)
     ui: UIConfig = field(default_factory=UIConfig)
+    market_indices: MarketIndicesConfig = field(default_factory=MarketIndicesConfig)
     
     # Base paths
     project_root: ClassVar[Path] = Path(__file__).parent

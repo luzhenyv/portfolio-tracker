@@ -641,3 +641,72 @@ class Note(Base):
 
     def __repr__(self) -> str:
         return f"<Note(id={self.id}, type={self.note_type}, title={self.title!r})>"
+
+
+class IndexCategory(str, Enum):
+    """Category of market index."""
+    EQUITY = "EQUITY"
+    VOLATILITY = "VOLATILITY"
+    COMMODITY = "COMMODITY"
+    BOND = "BOND"
+    CURRENCY = "CURRENCY"
+
+
+class MarketIndex(Base):
+    """
+    Market benchmark index for portfolio comparison.
+    
+    Tracks major indices like S&P 500, Russell 2000, VIX, etc.
+    Used for correlation analysis and performance comparison.
+    """
+    __tablename__ = "market_indices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    category: Mapped[IndexCategory] = mapped_column(
+        SQLEnum(IndexCategory, native_enum=False, length=20),
+        nullable=False,
+        default=IndexCategory.EQUITY
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now(timezone.utc), nullable=False
+    )
+
+    # Relationships
+    prices: Mapped[list["IndexPriceDaily"]] = relationship(
+        "IndexPriceDaily", back_populates="index", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<MarketIndex(id={self.id}, symbol={self.symbol}, name={self.name})>"
+
+
+class IndexPriceDaily(Base):
+    """
+    End-of-day price data for market indices.
+    
+    Similar to PriceDaily but for benchmark indices.
+    """
+    __tablename__ = "index_prices_daily"
+
+    index_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("market_indices.id", ondelete="CASCADE"), primary_key=True
+    )
+    date: Mapped[str] = mapped_column(String(10), primary_key=True)  # YYYY-MM-DD format
+    open: Mapped[Optional[float]] = mapped_column(Float)
+    high: Mapped[Optional[float]] = mapped_column(Float)
+    low: Mapped[Optional[float]] = mapped_column(Float)
+    close: Mapped[Optional[float]] = mapped_column(Float)
+    volume: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # Relationships
+    index: Mapped["MarketIndex"] = relationship("MarketIndex", back_populates="prices")
+
+    __table_args__ = (
+        Index("idx_index_prices_index_date", "index_id", "date"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<IndexPriceDaily(index_id={self.index_id}, date={self.date}, close={self.close})>"

@@ -177,3 +177,27 @@ CREATE TABLE IF NOT EXISTS valuation_metric_overrides (
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE
 );
+
+-- Market benchmark indices for portfolio comparison and correlation analysis
+CREATE TABLE IF NOT EXISTS market_indices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    description TEXT,
+    category TEXT CHECK(category IN ('EQUITY', 'VOLATILITY', 'COMMODITY', 'BOND', 'CURRENCY')) NOT NULL DEFAULT 'EQUITY',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS index_prices_daily (
+    index_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    open REAL,
+    high REAL,
+    low REAL,
+    close REAL,
+    volume INTEGER,
+    PRIMARY KEY (index_id, date),
+    FOREIGN KEY (index_id) REFERENCES market_indices(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_index_prices_index_date
+ON index_prices_daily(index_id, date);
