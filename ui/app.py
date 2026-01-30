@@ -414,8 +414,8 @@ def render_overview_page():
                     trace.line.width = 3
                     trace.line.dash = "solid"
                 else:
-                    trace.line.width = 2
-                    trace.line.dash = "dash"
+                    trace.line.width = 1
+                    trace.line.dash = "dot"
             
             fig.update_layout(
                 hovermode="x unified",
