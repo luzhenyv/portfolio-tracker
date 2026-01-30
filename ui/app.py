@@ -288,7 +288,6 @@ def render_overview_page():
             display_alloc[["Asset", "Type", "Value", "Percentage"]],
             hide_index=True,
         )
-        st.metric("Total Portfolio Value", format_currency(total_value))
     else:
         st.info("No assets to display. Add cash or positions.")
 
@@ -296,10 +295,10 @@ def render_overview_page():
     try:
         st.divider()
         st.subheader("📈 Period Returns & Benchmark Comparison")
-        
+
         # Get available benchmarks from database
         available_indices = get_all_indices()
-        
+
         # Time horizon options
         time_horizons = {
             "1 Month": 30,
@@ -307,24 +306,28 @@ def render_overview_page():
             "6 Months": 180,
             "1 Year": 365,
         }
-        
+
         # Initialize session state for benchmarks and time horizon
         if "selected_benchmarks" not in st.session_state:
             # Default to S&P 500 if available
-            default_benchmarks = ["SPX"] if available_indices and any(idx.symbol == "SPX" for idx in available_indices) else []
+            default_benchmarks = (
+                ["SPX"]
+                if available_indices and any(idx.symbol == "SPX" for idx in available_indices)
+                else []
+            )
             st.session_state.selected_benchmarks = default_benchmarks
-        
+
         if "selected_horizon" not in st.session_state:
             st.session_state.selected_horizon = "1 Year"
-        
+
         # Get the lookback days for selected horizon
         lookback_days = time_horizons[st.session_state.selected_horizon]
         selected_benchmarks = st.session_state.selected_benchmarks
-        
+
         # Fetch NAV data for the selected time horizon
         nav_series = get_nav_series(lookback_days=lookback_days)
         period_returns = get_nav_period_returns()
-        
+
         # Display period return metrics
         if any(v is not None for v in period_returns.values()):
             st.markdown("")
@@ -334,50 +337,54 @@ def render_overview_page():
                     col.metric(period, format_percentage(ret))
                 else:
                     col.metric(period, "N/A")
-        
+
         # Build normalized comparison chart
         if nav_series and len(nav_series.daily) > 0:
             st.markdown("")
-            st.caption(f"Normalized Performance (First Day = 1.0) — {st.session_state.selected_horizon}")
-            
+            st.caption(
+                f"Normalized Performance (First Day = 1.0) — {st.session_state.selected_horizon}",
+                text_alignment="right",
+            )
+
             # Build DataFrame for portfolio NAV (normalized)
             nav_dates = [nav.date for nav in nav_series.daily]
             nav_values = [nav.nav for nav in nav_series.daily]
-            
+
             # Normalize portfolio NAV (first day = 1.0)
             base_nav = nav_values[0] if nav_values and nav_values[0] > 0 else 1
             normalized_nav = [v / base_nav for v in nav_values]
-            
+
             # Create DataFrame for plotting
-            chart_data = pd.DataFrame({
-                "Date": nav_dates,
-                "Portfolio": normalized_nav,
-            })
+            chart_data = pd.DataFrame(
+                {
+                    "Date": nav_dates,
+                    "Portfolio": normalized_nav,
+                }
+            )
             chart_data["Date"] = pd.to_datetime(chart_data["Date"])
-            
+
             # Fetch and add benchmark data
             if selected_benchmarks:
                 benchmark_data = get_benchmark_comparison_data(
                     selected_benchmarks,
                     lookback_days=lookback_days,
                 )
-                
+
                 for symbol, series in benchmark_data.items():
                     if series and series.prices:
                         # Create a date-to-value mapping for the benchmark
-                        bench_df = pd.DataFrame([
-                            {"Date": p.date, symbol: p.value}
-                            for p in series.prices
-                        ])
+                        bench_df = pd.DataFrame(
+                            [{"Date": p.date, symbol: p.value} for p in series.prices]
+                        )
                         bench_df["Date"] = pd.to_datetime(bench_df["Date"])
-                        
+
                         # Merge with chart data
                         chart_data = chart_data.merge(bench_df, on="Date", how="outer")
-            
+
             # Sort by date and forward-fill missing values
             chart_data = chart_data.sort_values("Date")
             chart_data = chart_data.ffill()
-            
+
             # Melt DataFrame for Plotly
             value_cols = [col for col in chart_data.columns if col != "Date"]
             chart_melted = chart_data.melt(
@@ -386,14 +393,14 @@ def render_overview_page():
                 var_name="Asset",
                 value_name="Normalized Price",
             )
-            
+
             # Define color palette (portfolio highlighted)
             color_map = {"Portfolio": "#19D3F3"}  # Cyan for portfolio
             palette = px.colors.qualitative.Set2
             for i, col in enumerate(value_cols):
                 if col != "Portfolio":
                     color_map[col] = palette[i % len(palette)]
-            
+
             # Create line chart
             fig = px.line(
                 chart_melted,
@@ -403,11 +410,11 @@ def render_overview_page():
                 title="",
                 color_discrete_map=color_map,
             )
-            
+
             fig.update_traces(
                 hovertemplate="<b>%{fullData.name}</b><br>Date: %{x}<br>Value: %{y:.2f}<extra></extra>",
             )
-            
+
             # Make Portfolio line thick solid, benchmark lines dashed
             for trace in fig.data:
                 if trace.name == "Portfolio":
@@ -416,7 +423,7 @@ def render_overview_page():
                 else:
                     trace.line.width = 1
                     trace.line.dash = "dot"
-            
+
             fig.update_layout(
                 hovermode="x unified",
                 xaxis=dict(
@@ -440,48 +447,50 @@ def render_overview_page():
                 margin=dict(t=40, b=40, l=60, r=20),
                 height=350,
             )
-            
-            st.plotly_chart(fig, use_container_width=True)
+
+            # Create layout: controls on left, chart on right
+            control_col, chart_col = st.columns([1, 3])
+
+            with control_col:
+
+                # Benchmark selection (multiselect)
+                if available_indices:
+                    benchmark_options = {
+                        idx.symbol: f"{idx.name} ({idx.symbol})" for idx in available_indices
+                    }
+
+                    selected_benchmarks_new = st.multiselect(
+                        "Compare with Benchmarks",
+                        options=list(benchmark_options.keys()),
+                        default=st.session_state.selected_benchmarks,
+                        format_func=lambda x: benchmark_options.get(x, x),
+                        help="Select market indices to compare your portfolio performance against",
+                        key="benchmark_selector",
+                    )
+                    if selected_benchmarks_new != st.session_state.selected_benchmarks:
+                        st.session_state.selected_benchmarks = selected_benchmarks_new
+                        st.rerun()
+                else:
+                    st.caption("No benchmarks available. Add benchmarks in Admin → Benchmarks.")
+
+                # Time horizon selection (pill-style buttons)
+                horizon = st.pills(
+                    "Time horizon",
+                    options=list(time_horizons.keys()),
+                    default=st.session_state.selected_horizon,
+                )
+                if horizon != st.session_state.selected_horizon:
+                    st.session_state.selected_horizon = horizon
+                    st.rerun()
+
+            with chart_col:
+                st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No NAV history available. Add trades or cash transactions to see chart.")
-        
-        # Benchmark selection (multiselect pills-style) - moved below chart
-        st.markdown("")
-        if available_indices:
-            benchmark_options = {idx.symbol: f"{idx.name} ({idx.symbol})" for idx in available_indices}
-            
-            selected_benchmarks_new = st.multiselect(
-                "Compare with Benchmarks",
-                options=list(benchmark_options.keys()),
-                default=st.session_state.selected_benchmarks,
-                format_func=lambda x: benchmark_options.get(x, x),
-                help="Select market indices to compare your portfolio performance against",
-                key="benchmark_selector",
-            )
-            if selected_benchmarks_new != st.session_state.selected_benchmarks:
-                st.session_state.selected_benchmarks = selected_benchmarks_new
-                st.rerun()
-        else:
-            st.caption("No benchmarks available. Add benchmarks in Admin → Benchmarks.")
-        
-        # Time horizon selection (pill-style buttons) - moved below chart
-        st.caption("Time Horizon")
-        horizon_cols = st.columns(len(time_horizons))
-        
-        for col, horizon_name in zip(horizon_cols, time_horizons.keys()):
-            with col:
-                is_selected = st.session_state.selected_horizon == horizon_name
-                if st.button(
-                    horizon_name,
-                    key=f"horizon_{horizon_name}",
-                    type="primary" if is_selected else "secondary",
-                    use_container_width=True,
-                ):
-                    st.session_state.selected_horizon = horizon_name
-                    st.rerun()
     except Exception as e:
         st.caption(f"Period returns unavailable: {e}")
         import traceback
+
         st.caption(traceback.format_exc())
 
     st.divider()
@@ -633,9 +642,7 @@ def render_positions_page():
             "Net Avg Cost",
             help="Average cost per share based on net invested capital (cost basis / net shares)",
         ),
-        "close": st.column_config.TextColumn(
-            "Current", help="Latest end-of-day price per share"
-        ),
+        "close": st.column_config.TextColumn("Current", help="Latest end-of-day price per share"),
         "market_value": st.column_config.TextColumn(
             "Market Value",
             help="Net market value = (long shares × price) - (short shares × price)",
@@ -1053,7 +1060,7 @@ def render_admin_page():
                     f"{trade_row['Action']} {trade_row['Shares']} shares @ ${trade_row['Price']:.2f}"
                 )
                 st.caption(f"Date: {trade_row['Date']}")
-                
+
                 confirm = st.text_input('Type "DELETE" to confirm', value="")
                 col_a, col_b = st.columns(2)
                 do_delete = col_a.button(
@@ -1079,17 +1086,17 @@ def render_admin_page():
                 ticker = trade.asset.ticker if trade.asset else "?"
                 trade_id = trade.id
                 is_editable = trade_id in editable_trade_ids
-                
+
                 # Create a container for each trade
                 with st.container(border=True):
                     # Use columns for layout: [Trade Info | Actions]
                     col_info, col_actions = st.columns([5, 1])
-                    
+
                     with col_info:
                         # Display trade details in a readable format
                         date_str = trade.trade_at.strftime("%Y-%m-%d %H:%M:%S")
                         action_emoji = "🟢" if trade.action.value == "BUY" else "🔴"
-                        
+
                         st.markdown(
                             f"**{action_emoji} {ticker}** / {trade.action.value} / "
                             f"{int(trade.shares)} shares @ /${trade.price:.2f} / "
@@ -1097,36 +1104,43 @@ def render_admin_page():
                             f"P&L: /${trade.realized_pnl or 0:.2f}"
                         )
                         st.caption(f"ID: {trade_id} · {date_str}")
-                    
+
                     with col_actions:
                         # Action buttons in a compact layout
                         if is_editable:
                             col_edit, col_delete = st.columns(2)
                             with col_edit:
                                 if st.button("✏️", key=f"edit_{trade_id}", help="Edit trade"):
-                                    edit_trade_dialog({
-                                        "trade_id": trade_id,
-                                        "Date": trade.trade_at,
-                                        "Ticker": ticker,
-                                        "Action": trade.action.value,
-                                        "Shares": int(trade.shares),
-                                        "Price": trade.price,
-                                        "Fees": trade.fees or 0.0,
-                                    })
+                                    edit_trade_dialog(
+                                        {
+                                            "trade_id": trade_id,
+                                            "Date": trade.trade_at,
+                                            "Ticker": ticker,
+                                            "Action": trade.action.value,
+                                            "Shares": int(trade.shares),
+                                            "Price": trade.price,
+                                            "Fees": trade.fees or 0.0,
+                                        }
+                                    )
                             with col_delete:
                                 if st.button("🗑️", key=f"delete_{trade_id}", help="Delete trade"):
-                                    delete_trade_dialog({
-                                        "trade_id": trade_id,
-                                        "Date": trade.trade_at,
-                                        "Ticker": ticker,
-                                        "Action": trade.action.value,
-                                        "Shares": int(trade.shares),
-                                        "Price": trade.price,
-                                        "Fees": trade.fees or 0.0,
-                                    })
+                                    delete_trade_dialog(
+                                        {
+                                            "trade_id": trade_id,
+                                            "Date": trade.trade_at,
+                                            "Ticker": ticker,
+                                            "Action": trade.action.value,
+                                            "Shares": int(trade.shares),
+                                            "Price": trade.price,
+                                            "Fees": trade.fees or 0.0,
+                                        }
+                                    )
                         else:
-                            st.markdown("<div style='text-align: center; opacity: 0.3;'>🔒</div>", unsafe_allow_html=True)
-                    
+                            st.markdown(
+                                "<div style='text-align: center; opacity: 0.3;'>🔒</div>",
+                                unsafe_allow_html=True,
+                            )
+
         else:
             st.info("No trades yet")
 
@@ -1158,12 +1172,12 @@ def render_admin_page():
     st.divider()
     st.subheader("📊 Benchmark Management")
     st.caption("Add or remove market indices for portfolio comparison")
-    
+
     # Get current benchmarks
     current_indices = get_all_indices()
-    
+
     bench_col1, bench_col2 = st.columns(2)
-    
+
     with bench_col1:
         st.markdown("**Current Benchmarks**")
         if current_indices:
@@ -1182,10 +1196,10 @@ def render_admin_page():
                             st.error(f"Failed to remove {idx.symbol}")
         else:
             st.info("No benchmarks configured")
-    
+
     with bench_col2:
         st.markdown("**Add New Benchmark**")
-        
+
         # Common indices to add
         common_indices = [
             ("SPX", "S&P 500", "^GSPC", "EQUITY"),
@@ -1194,15 +1208,15 @@ def render_admin_page():
             ("DJI", "Dow Jones Industrial", "^DJI", "EQUITY"),
             ("VIX", "CBOE Volatility Index", "^VIX", "VOLATILITY"),
         ]
-        
+
         # Filter out already added indices
         existing_symbols = {idx.symbol for idx in current_indices}
         available_to_add = [
-            (sym, name, yahoo, cat) 
-            for sym, name, yahoo, cat in common_indices 
+            (sym, name, yahoo, cat)
+            for sym, name, yahoo, cat in common_indices
             if sym not in existing_symbols
         ]
-        
+
         if available_to_add:
             with st.form("add_benchmark_form", clear_on_submit=True):
                 selected_index = st.selectbox(
@@ -1211,9 +1225,9 @@ def render_admin_page():
                     format_func=lambda x: f"{x[1]} ({x[0]})",
                     index=0,
                 )
-                
+
                 add_bench_submitted = st.form_submit_button("Add Benchmark", type="primary")
-                
+
                 if add_bench_submitted and selected_index:
                     symbol, name = selected_index
                     # Find the full config
@@ -1224,7 +1238,7 @@ def render_admin_page():
                             yahoo_symbol = yh
                             category = cat
                             break
-                    
+
                     try:
                         create_index(
                             symbol=symbol,
@@ -1235,15 +1249,19 @@ def render_admin_page():
                         with st.spinner(f"Fetching price data for {symbol}..."):
                             sync_result = sync_index_prices(symbol=symbol, lookback_days=365)
                             if sync_result and sync_result[0].success:
-                                st.success(f"Added {name} with {sync_result[0].records_added} price records")
+                                st.success(
+                                    f"Added {name} with {sync_result[0].records_added} price records"
+                                )
                             else:
-                                st.warning(f"Added {name} but price sync failed. Run update job to fetch prices.")
+                                st.warning(
+                                    f"Added {name} but price sync failed. Run update job to fetch prices."
+                                )
                         st.rerun()
                     except Exception as e:
                         st.error(f"Failed to add benchmark: {e}")
         else:
             st.info("All common indices have been added")
-        
+
         # Custom index input
         with st.expander("➕ Add Custom Index"):
             with st.form("custom_benchmark_form", clear_on_submit=True):
@@ -1253,7 +1271,7 @@ def render_admin_page():
                     help="Internal symbol for the index",
                 )
                 custom_name = st.text_input(
-                    "Name", 
+                    "Name",
                     placeholder="e.g., FTSE 100",
                 )
                 custom_yahoo = st.text_input(
@@ -1266,9 +1284,9 @@ def render_admin_page():
                     options=["EQUITY", "VOLATILITY", "COMMODITY", "BOND", "CURRENCY"],
                     index=0,
                 )
-                
+
                 custom_submitted = st.form_submit_button("Add Custom Index")
-                
+
                 if custom_submitted:
                     if custom_symbol and custom_name:
                         try:
