@@ -552,3 +552,128 @@ def ensure_indices_seeded() -> list[SyncResult]:
         ))
     
     return results
+
+
+@dataclass
+class NormalizedPricePoint:
+    """Single normalized price point (base = 1.0)."""
+    date: str
+    value: float  # Normalized value (first day = 1.0)
+
+
+@dataclass
+class NormalizedPriceSeries:
+    """Normalized price series for an index or portfolio."""
+    symbol: str
+    name: str
+    prices: list[NormalizedPricePoint]
+    start_date: str | None
+    end_date: str | None
+    total_return: float | None  # Total return over period
+
+
+def get_normalized_index_prices(
+    symbol: str,
+    start_date: str | date | None = None,
+    end_date: str | date | None = None,
+    lookback_days: int | None = None,
+) -> NormalizedPriceSeries | None:
+    """
+    Get normalized price series for an index (first day = 1.0).
+    
+    This is useful for comparing performance across different assets
+    on the same chart.
+    
+    Args:
+        symbol: Index symbol (e.g., "SPX").
+        start_date: Start date (YYYY-MM-DD or date object).
+        end_date: End date (YYYY-MM-DD or date object).
+        lookback_days: Alternative to start_date - number of days to look back.
+        
+    Returns:
+        NormalizedPriceSeries with normalized values, or None if not found.
+    """
+    history = get_index_prices(
+        symbol,
+        start_date=start_date,
+        end_date=end_date,
+        lookback_days=lookback_days,
+    )
+    
+    if not history or not history.prices:
+        return None
+    
+    # Filter to prices with valid close values
+    valid_prices = [p for p in history.prices if p.close is not None and p.close > 0]
+    if not valid_prices:
+        return None
+    
+    # Normalize to first day = 1.0
+    base_price = valid_prices[0].close
+    normalized_points = [
+        NormalizedPricePoint(
+            date=p.date,
+            value=p.close / base_price,
+        )
+        for p in valid_prices
+    ]
+    
+    # Calculate total return
+    if len(normalized_points) >= 2:
+        total_return = normalized_points[-1].value - 1.0
+    else:
+        total_return = None
+    
+    return NormalizedPriceSeries(
+        symbol=history.symbol,
+        name=history.name,
+        prices=normalized_points,
+        start_date=normalized_points[0].date if normalized_points else None,
+        end_date=normalized_points[-1].date if normalized_points else None,
+        total_return=total_return,
+    )
+
+
+def get_benchmark_comparison_data(
+    benchmark_symbols: list[str],
+    lookback_days: int = 365,
+) -> dict[str, NormalizedPriceSeries]:
+    """
+    Get normalized price series for multiple benchmarks.
+    
+    Args:
+        benchmark_symbols: List of index symbols to fetch.
+        lookback_days: Days of history to fetch.
+        
+    Returns:
+        Dict mapping symbol -> NormalizedPriceSeries
+    """
+    result = {}
+    
+    for symbol in benchmark_symbols:
+        series = get_normalized_index_prices(symbol, lookback_days=lookback_days)
+        if series:
+            result[symbol] = series
+    
+    return result
+
+
+def delete_index(symbol: str) -> bool:
+    """
+    Delete a market index and all its price data.
+    
+    Args:
+        symbol: Index symbol to delete.
+        
+    Returns:
+        True if deleted, False if not found.
+    """
+    db = get_db()
+    with db.session() as session:
+        repo = MarketIndexRepository(session)
+        idx = repo.get_by_symbol(symbol)
+        if not idx:
+            return False
+        repo.delete(idx.id)
+        session.commit()
+        return True

@@ -23,6 +23,14 @@ from decision.engine import decision_engine
 from services.position_service import buy_position, sell_position
 from services.asset_service import create_asset_with_data, get_all_tickers
 from services.cash_service import get_cash_balance, deposit_cash, withdraw_cash, get_cash_ledger
+from services.market_index_service import (
+    get_all_indices,
+    get_normalized_index_prices,
+    get_benchmark_comparison_data,
+    create_index,
+    delete_index,
+    sync_index_prices,
+)
 from services.trade_service import (
     get_recent_trades,
     get_latest_trade_ids_by_ticker,
@@ -284,70 +292,230 @@ def render_overview_page():
     else:
         st.info("No assets to display. Add cash or positions.")
 
-    # Period Returns Section (2 parts: metrics + NAV chart)
+    # Period Returns Section with Benchmark Comparison
     try:
-        period_returns = get_nav_period_returns()
-        nav_series = get_nav_series(lookback_days=365)
-
-        # Show section if we have either returns or NAV data
-        if (any(v is not None for v in period_returns.values())) or nav_series:
-            st.divider()
-            st.subheader("📈 Period Returns")
-
-            # Part 1: Return metrics (1m, 3m, 6m, 1y)
-            if any(v is not None for v in period_returns.values()):
-                return_cols = st.columns(len(period_returns))
-                for col, (period, ret) in zip(return_cols, period_returns.items()):
-                    if ret is not None:
-                        col.metric(period, format_percentage(ret))
-                    else:
-                        col.metric(period, "N/A")
-
-            # Part 2: NAV line chart (1Y lookback)
-            if nav_series and len(nav_series.daily) > 0:
-                st.markdown("")
-                st.caption("Daily Net Asset Value (Last 1 Year)")
-
-                # Build DataFrame for plotting
-                nav_data = pd.DataFrame(
-                    [(nav.date, nav.nav) for nav in nav_series.daily],
-                    columns=["Date", "NAV"],
+        st.divider()
+        st.subheader("📈 Period Returns & Benchmark Comparison")
+        
+        # Get available benchmarks from database
+        available_indices = get_all_indices()
+        
+        # Time horizon options
+        time_horizons = {
+            "1 Month": 30,
+            "3 Months": 90,
+            "6 Months": 180,
+            "1 Year": 365,
+        }
+        
+        # Layout: Controls on left, stats on right
+        controls_col, stats_col = st.columns([2, 1])
+        
+        with controls_col:
+            # Benchmark selection (multiselect pills-style)
+            if available_indices:
+                benchmark_options = {idx.symbol: f"{idx.name} ({idx.symbol})" for idx in available_indices}
+                
+                # Initialize session state for selected benchmarks
+                if "selected_benchmarks" not in st.session_state:
+                    # Default to S&P 500 if available
+                    default_benchmarks = ["SPX"] if "SPX" in benchmark_options else []
+                    st.session_state.selected_benchmarks = default_benchmarks
+                
+                selected_benchmarks = st.multiselect(
+                    "Compare with Benchmarks",
+                    options=list(benchmark_options.keys()),
+                    default=st.session_state.selected_benchmarks,
+                    format_func=lambda x: benchmark_options.get(x, x),
+                    help="Select market indices to compare your portfolio performance against",
+                    key="benchmark_selector",
                 )
-
-                # Create line chart
-                fig = px.line(
-                    nav_data,
-                    x="Date",
-                    y="NAV",
-                    title="",
-                    labels={"NAV": "Net Asset Value ($)", "Date": "Date"},
-                )
-                fig.update_traces(
-                    line_color="#19D3F3",
-                    line_width=2,
-                    hovertemplate="<b>%{x}</b><br>NAV: $%{y:,.0f}<extra></extra>",
-                )
-                fig.update_layout(
-                    hovermode="x unified",
-                    xaxis=dict(
-                        showgrid=True,
-                        gridcolor="#f0f0f0",
-                    ),
-                    yaxis=dict(
-                        showgrid=True,
-                        gridcolor="#f0f0f0",
-                        tickformat="$,.0f",
-                    ),
-                    margin=dict(t=20, b=40, l=60, r=20),
-                    height=300,
-                )
-
-                st.plotly_chart(fig)
+                st.session_state.selected_benchmarks = selected_benchmarks
             else:
-                st.info("No NAV history available. Add trades or cash transactions to see chart.")
+                st.caption("No benchmarks available. Add benchmarks in Admin → Benchmarks.")
+                selected_benchmarks = []
+            
+            # Time horizon selection (pill-style buttons)
+            st.caption("Time Horizon")
+            horizon_cols = st.columns(len(time_horizons))
+            
+            # Initialize session state for time horizon
+            if "selected_horizon" not in st.session_state:
+                st.session_state.selected_horizon = "1 Year"
+            
+            for col, horizon_name in zip(horizon_cols, time_horizons.keys()):
+                with col:
+                    is_selected = st.session_state.selected_horizon == horizon_name
+                    if st.button(
+                        horizon_name,
+                        key=f"horizon_{horizon_name}",
+                        type="primary" if is_selected else "secondary",
+                        use_container_width=True,
+                    ):
+                        st.session_state.selected_horizon = horizon_name
+                        st.rerun()
+        
+        # Get the lookback days for selected horizon
+        lookback_days = time_horizons[st.session_state.selected_horizon]
+        
+        # Fetch NAV data for the selected time horizon
+        nav_series = get_nav_series(lookback_days=lookback_days)
+        period_returns = get_nav_period_returns()
+        
+        # Display period return metrics
+        if any(v is not None for v in period_returns.values()):
+            st.markdown("")
+            return_cols = st.columns(len(period_returns))
+            for col, (period, ret) in zip(return_cols, period_returns.items()):
+                if ret is not None:
+                    col.metric(period, format_percentage(ret))
+                else:
+                    col.metric(period, "N/A")
+        
+        # Build normalized comparison chart
+        if nav_series and len(nav_series.daily) > 0:
+            st.markdown("")
+            st.caption(f"Normalized Performance (First Day = 1.0) — {st.session_state.selected_horizon}")
+            
+            # Build DataFrame for portfolio NAV (normalized)
+            nav_dates = [nav.date for nav in nav_series.daily]
+            nav_values = [nav.nav for nav in nav_series.daily]
+            
+            # Normalize portfolio NAV (first day = 1.0)
+            base_nav = nav_values[0] if nav_values and nav_values[0] > 0 else 1
+            normalized_nav = [v / base_nav for v in nav_values]
+            
+            # Create DataFrame for plotting
+            chart_data = pd.DataFrame({
+                "Date": nav_dates,
+                "Portfolio": normalized_nav,
+            })
+            chart_data["Date"] = pd.to_datetime(chart_data["Date"])
+            
+            # Track best/worst performers
+            performance_summary = {"Portfolio": normalized_nav[-1] - 1.0 if normalized_nav else 0}
+            
+            # Fetch and add benchmark data
+            if selected_benchmarks:
+                benchmark_data = get_benchmark_comparison_data(
+                    selected_benchmarks,
+                    lookback_days=lookback_days,
+                )
+                
+                for symbol, series in benchmark_data.items():
+                    if series and series.prices:
+                        # Create a date-to-value mapping for the benchmark
+                        bench_df = pd.DataFrame([
+                            {"Date": p.date, symbol: p.value}
+                            for p in series.prices
+                        ])
+                        bench_df["Date"] = pd.to_datetime(bench_df["Date"])
+                        
+                        # Merge with chart data
+                        chart_data = chart_data.merge(bench_df, on="Date", how="outer")
+                        
+                        # Track performance
+                        if series.total_return is not None:
+                            performance_summary[symbol] = series.total_return
+            
+            # Sort by date and forward-fill missing values
+            chart_data = chart_data.sort_values("Date")
+            chart_data = chart_data.ffill()
+            
+            # Melt DataFrame for Plotly
+            value_cols = [col for col in chart_data.columns if col != "Date"]
+            chart_melted = chart_data.melt(
+                id_vars=["Date"],
+                value_vars=value_cols,
+                var_name="Asset",
+                value_name="Normalized Price",
+            )
+            
+            # Define color palette (portfolio highlighted)
+            color_map = {"Portfolio": "#19D3F3"}  # Cyan for portfolio
+            palette = px.colors.qualitative.Set2
+            for i, col in enumerate(value_cols):
+                if col != "Portfolio":
+                    color_map[col] = palette[i % len(palette)]
+            
+            # Create line chart
+            fig = px.line(
+                chart_melted,
+                x="Date",
+                y="Normalized Price",
+                color="Asset",
+                title="",
+                color_discrete_map=color_map,
+            )
+            
+            fig.update_traces(
+                line_width=2,
+                hovertemplate="<b>%{fullData.name}</b><br>Date: %{x}<br>Value: %{y:.2f}<extra></extra>",
+            )
+            
+            # Make Portfolio line thicker/prominent
+            for trace in fig.data:
+                if trace.name == "Portfolio":
+                    trace.line.width = 3
+            
+            fig.update_layout(
+                hovermode="x unified",
+                xaxis=dict(
+                    showgrid=True,
+                    gridcolor="rgba(128, 128, 128, 0.2)",
+                    title="",
+                ),
+                yaxis=dict(
+                    showgrid=True,
+                    gridcolor="rgba(128, 128, 128, 0.2)",
+                    title="Normalized Price",
+                    tickformat=".2f",
+                ),
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="left",
+                    x=0,
+                ),
+                margin=dict(t=40, b=40, l=60, r=20),
+                height=350,
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Show best/worst performers
+            with stats_col:
+                if len(performance_summary) > 0:
+                    sorted_perf = sorted(
+                        performance_summary.items(),
+                        key=lambda x: x[1] if x[1] is not None else float('-inf'),
+                        reverse=True,
+                    )
+                    
+                    if sorted_perf:
+                        best_name, best_ret = sorted_perf[0]
+                        worst_name, worst_ret = sorted_perf[-1]
+                        
+                        st.markdown("##### Best Performer")
+                        st.markdown(f"**{best_name}**")
+                        if best_ret is not None:
+                            color = "green" if best_ret >= 0 else "red"
+                            st.markdown(f":{color}[↑ {best_ret:.1%}]" if best_ret >= 0 else f":{color}[↓ {best_ret:.1%}]")
+                        
+                        if len(sorted_perf) > 1:
+                            st.markdown("")
+                            st.markdown("##### Worst Performer")
+                            st.markdown(f"**{worst_name}**")
+                            if worst_ret is not None:
+                                color = "green" if worst_ret >= 0 else "red"
+                                st.markdown(f":{color}[↑ {worst_ret:.1%}]" if worst_ret >= 0 else f":{color}[↓ {worst_ret:.1%}]")
+        else:
+            st.info("No NAV history available. Add trades or cash transactions to see chart.")
     except Exception as e:
         st.caption(f"Period returns unavailable: {e}")
-        pass  # Period returns are optional
+        import traceback
+        st.caption(traceback.format_exc())
 
     st.divider()
 
@@ -1018,6 +1186,136 @@ def render_admin_page():
             )
         else:
             st.info("No cash transactions yet")
+
+    # --- BENCHMARK MANAGEMENT ---
+    st.divider()
+    st.subheader("📊 Benchmark Management")
+    st.caption("Add or remove market indices for portfolio comparison")
+    
+    # Get current benchmarks
+    current_indices = get_all_indices()
+    
+    bench_col1, bench_col2 = st.columns(2)
+    
+    with bench_col1:
+        st.markdown("**Current Benchmarks**")
+        if current_indices:
+            for idx in current_indices:
+                col_name, col_cat, col_del = st.columns([3, 2, 1])
+                with col_name:
+                    st.text(f"{idx.name} ({idx.symbol})")
+                with col_cat:
+                    st.caption(idx.category)
+                with col_del:
+                    if st.button("🗑️", key=f"del_bench_{idx.symbol}", help=f"Remove {idx.symbol}"):
+                        if delete_index(idx.symbol):
+                            st.success(f"Removed {idx.symbol}")
+                            st.rerun()
+                        else:
+                            st.error(f"Failed to remove {idx.symbol}")
+        else:
+            st.info("No benchmarks configured")
+    
+    with bench_col2:
+        st.markdown("**Add New Benchmark**")
+        
+        # Common indices to add
+        common_indices = [
+            ("SPX", "S&P 500", "^GSPC", "EQUITY"),
+            ("RUT", "Russell 2000", "^RUT", "EQUITY"),
+            ("IXIC", "NASDAQ Composite", "^IXIC", "EQUITY"),
+            ("DJI", "Dow Jones Industrial", "^DJI", "EQUITY"),
+            ("VIX", "CBOE Volatility Index", "^VIX", "VOLATILITY"),
+        ]
+        
+        # Filter out already added indices
+        existing_symbols = {idx.symbol for idx in current_indices}
+        available_to_add = [
+            (sym, name, yahoo, cat) 
+            for sym, name, yahoo, cat in common_indices 
+            if sym not in existing_symbols
+        ]
+        
+        if available_to_add:
+            with st.form("add_benchmark_form", clear_on_submit=True):
+                selected_index = st.selectbox(
+                    "Select Index",
+                    options=[(sym, name) for sym, name, _, _ in available_to_add],
+                    format_func=lambda x: f"{x[1]} ({x[0]})",
+                    index=0,
+                )
+                
+                add_bench_submitted = st.form_submit_button("Add Benchmark", type="primary")
+                
+                if add_bench_submitted and selected_index:
+                    symbol, name = selected_index
+                    # Find the full config
+                    yahoo_symbol = None
+                    category = "EQUITY"
+                    for sym, nm, yh, cat in common_indices:
+                        if sym == symbol:
+                            yahoo_symbol = yh
+                            category = cat
+                            break
+                    
+                    try:
+                        create_index(
+                            symbol=symbol,
+                            name=name,
+                            category=category,
+                        )
+                        # Sync prices for the new index
+                        with st.spinner(f"Fetching price data for {symbol}..."):
+                            sync_result = sync_index_prices(symbol=symbol, lookback_days=365)
+                            if sync_result and sync_result[0].success:
+                                st.success(f"Added {name} with {sync_result[0].records_added} price records")
+                            else:
+                                st.warning(f"Added {name} but price sync failed. Run update job to fetch prices.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to add benchmark: {e}")
+        else:
+            st.info("All common indices have been added")
+        
+        # Custom index input
+        with st.expander("➕ Add Custom Index"):
+            with st.form("custom_benchmark_form", clear_on_submit=True):
+                custom_symbol = st.text_input(
+                    "Symbol",
+                    placeholder="e.g., FTSE",
+                    help="Internal symbol for the index",
+                )
+                custom_name = st.text_input(
+                    "Name", 
+                    placeholder="e.g., FTSE 100",
+                )
+                custom_yahoo = st.text_input(
+                    "Yahoo Finance Symbol",
+                    placeholder="e.g., ^FTSE",
+                    help="Symbol used to fetch prices from Yahoo Finance",
+                )
+                custom_category = st.selectbox(
+                    "Category",
+                    options=["EQUITY", "VOLATILITY", "COMMODITY", "BOND", "CURRENCY"],
+                    index=0,
+                )
+                
+                custom_submitted = st.form_submit_button("Add Custom Index")
+                
+                if custom_submitted:
+                    if custom_symbol and custom_name:
+                        try:
+                            create_index(
+                                symbol=custom_symbol.upper().strip(),
+                                name=custom_name.strip(),
+                                category=custom_category,
+                            )
+                            st.success(f"Added {custom_name}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to add: {e}")
+                    else:
+                        st.error("Symbol and Name are required")
 
 
 def render_watchlist_page():
