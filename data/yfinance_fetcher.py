@@ -179,7 +179,7 @@ class PriceFetcher:
                     start_date = start_dt.strftime("%Y-%m-%d")
                 else:
                     # Initial fetch - get last 90 days
-                    start_dt = datetime.now() - timedelta(days=90)
+                    start_dt = datetime.now() - timedelta(days=config.data_fetcher.default_lookback_days)
                     start_date = start_dt.strftime("%Y-%m-%d")
                 
                 # Fetch prices

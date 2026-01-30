@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import NamedTuple
 
 from db import init_db
-from data.fetch_prices import PriceFetcher, ValuationFetcher, FetchResult
+from data.yfinance_fetcher import PriceFetcher, ValuationFetcher, FetchResult
 
 
 logging.basicConfig(

@@ -233,7 +233,7 @@ def fetch_valuations_after_restore(db: DatabaseManager):
     This populates the valuation_metrics table, which is required for
     the Watchlist page to display data.
     """
-    from data.fetch_prices import ValuationFetcher
+    from data.yfinance_fetcher import ValuationFetcher
     import logging
     
     logging.basicConfig(level=logging.INFO)

@@ -40,7 +40,7 @@ from datetime import datetime
 from typing import Optional
 
 from config import config
-from data.fetch_prices import PriceFetcher, ValuationFetcher
+from data.yfinance_fetcher import PriceFetcher, ValuationFetcher
 from db import get_db, init_db
 from db.repositories import AssetRepository, PriceRepository, PositionRepository
 

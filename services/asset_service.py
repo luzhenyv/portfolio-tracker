@@ -16,7 +16,7 @@ import yfinance as yf
 from config import config
 from db import Asset, AssetStatus, AssetType, get_db
 from db.repositories import AssetRepository, PriceRepository, ValuationRepository
-from data.fetch_prices import PriceFetcher, ValuationFetcher
+from data.yfinance_fetcher import PriceFetcher, ValuationFetcher
 
 
 logger = logging.getLogger(__name__)

@@ -4,7 +4,7 @@ Data package initialization.
 Exports data fetching services.
 """
 
-from data.fetch_prices import (
+from data.yfinance_fetcher import (
     FetchResult,
     PriceFetcher,
     ValuationFetcher,
