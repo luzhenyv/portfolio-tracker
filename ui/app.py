@@ -2076,10 +2076,9 @@ def render_assets_tags_page():
         # Sort assets by ticker
         assets_list = sorted(assets_list, key=lambda a: a.ticker)
 
-        st.markdown(f"**{len(assets_list)} Assets**")
-
         # --- Asset List with Tag Editing ---
-        with st.container(height=400):
+        st.caption(f"**{len(assets_list)} Assets**")
+        with st.container(height=400, border=False):
             if assets_list:
                 for asset in assets_list:
                     with st.container(border=True):
@@ -2291,7 +2290,7 @@ def render_assets_tags_page():
 
         # --- Left Column: Tag List ---
         with tag_col1:
-            st.subheader("📋 All Tags")
+            st.subheader("📋 Tag List")
 
             if tag_result.tags:
                 for tag_with_count in tag_result.tags:
@@ -2400,27 +2399,6 @@ def render_assets_tags_page():
                             st.rerun()
                         else:
                             st.error(result.message)
-
-            st.divider()
-
-            # --- Tag Usage Summary ---
-            st.subheader("📈 Tag Summary")
-
-            if tag_result.tags:
-                summary_data = []
-                for twc in tag_result.tags:
-                    summary_data.append({
-                        "Tag": twc.tag.name,
-                        "Assets": twc.asset_count,
-                    })
-
-                st.dataframe(
-                    pd.DataFrame(summary_data),
-                    hide_index=True,
-                    use_container_width=True,
-                )
-            else:
-                st.caption("No tags to summarize")
 
 
 def main():
