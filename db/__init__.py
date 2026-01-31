@@ -24,10 +24,12 @@ from db.models import (
     NoteType,
     Position,  # Current position state (formerly PositionState)
     PriceDaily,
+    Tag,
     Trade,  # Transaction history
     TradeAction,
     ValuationMetric,
     WatchlistTarget,
+    asset_tags,
 )
 from db.session import (
     DatabaseManager,
@@ -37,6 +39,7 @@ from db.session import (
 from db.repositories import (
     MarketIndexRepository,
     IndexPriceRepository,
+    TagRepository,
 )
 
 __all__ = [
@@ -59,10 +62,12 @@ __all__ = [
     "NoteType",
     "Position",  # Current position state
     "PriceDaily",
+    "Tag",
     "Trade",  # Transaction ledger
     "TradeAction",
     "ValuationMetric",
     "WatchlistTarget",
+    "asset_tags",
     # Session management
     "DatabaseManager",
     "get_db",
@@ -70,4 +75,5 @@ __all__ = [
     # Repositories
     "MarketIndexRepository",
     "IndexPriceRepository",
+    "TagRepository",
 ]

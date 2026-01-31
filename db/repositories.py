@@ -25,10 +25,12 @@ from db.models import (
     NoteType,
     Position,
     PriceDaily,
+    Tag,
     Trade,
     TradeAction,
     ValuationMetric,
     ValuationMetricOverride,
+    asset_tags,
 )
 
 
@@ -2227,3 +2229,322 @@ class IndexPriceRepository:
 
         prices = self.session.scalars(stmt).all()
         return {p.index_id: p for p in prices}
+
+
+class TagRepository:
+    """
+    Repository for Tag CRUD and Asset-Tag association operations.
+    
+    Supports:
+    - Tag CRUD (create, read, update/rename, delete)
+    - Attach/detach tags to/from assets
+    - Query assets by tags (OR semantics)
+    - Query untagged assets
+    
+    Tag names are case-insensitive unique (enforced at service layer).
+    """
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Tag CRUD
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def get_by_id(self, tag_id: int) -> Tag | None:
+        """Get tag by ID."""
+        return self.session.get(Tag, tag_id)
+
+    def get_by_name(self, name: str) -> Tag | None:
+        """Get tag by name (case-insensitive)."""
+        stmt = select(Tag).where(func.lower(Tag.name) == name.lower())
+        return self.session.scalar(stmt)
+
+    def get_all(self) -> Sequence[Tag]:
+        """Get all tags ordered by name."""
+        stmt = select(Tag).order_by(Tag.name)
+        return self.session.scalars(stmt).all()
+
+    def get_all_with_asset_counts(self) -> list[tuple[Tag, int]]:
+        """
+        Get all tags with count of associated assets.
+        
+        Returns:
+            List of (Tag, asset_count) tuples ordered by name.
+        """
+        stmt = (
+            select(Tag, func.count(asset_tags.c.asset_id).label("asset_count"))
+            .outerjoin(asset_tags, Tag.id == asset_tags.c.tag_id)
+            .group_by(Tag.id)
+            .order_by(Tag.name)
+        )
+        result = self.session.execute(stmt).all()
+        return [(row[0], row[1]) for row in result]
+
+    def create(self, name: str, description: str | None = None) -> Tag:
+        """
+        Create a new tag.
+        
+        Args:
+            name: Tag name (will be stripped, uniqueness enforced at service layer)
+            description: Optional description
+            
+        Returns:
+            The created Tag.
+        """
+        tag = Tag(name=name.strip(), description=description)
+        self.session.add(tag)
+        self.session.flush()
+        return tag
+
+    def get_or_create(self, name: str, description: str | None = None) -> tuple[Tag, bool]:
+        """
+        Get existing tag by name or create new one.
+        
+        Args:
+            name: Tag name (case-insensitive match)
+            description: Optional description (only used if creating)
+            
+        Returns:
+            Tuple of (tag, created) where created is True if new.
+        """
+        existing = self.get_by_name(name)
+        if existing:
+            return existing, False
+        return self.create(name, description), True
+
+    def rename(self, tag_id: int, new_name: str) -> Tag | None:
+        """
+        Rename a tag.
+        
+        Args:
+            tag_id: ID of tag to rename
+            new_name: New name (uniqueness enforced at service layer)
+            
+        Returns:
+            Updated Tag or None if not found.
+        """
+        tag = self.get_by_id(tag_id)
+        if tag:
+            tag.name = new_name.strip()
+            self.session.flush()
+        return tag
+
+    def update_description(self, tag_id: int, description: str | None) -> Tag | None:
+        """Update tag description."""
+        tag = self.get_by_id(tag_id)
+        if tag:
+            tag.description = description
+            self.session.flush()
+        return tag
+
+    def delete(self, tag_id: int) -> bool:
+        """
+        Delete a tag (hard delete, cascades to asset_tags).
+        
+        Returns:
+            True if deleted, False if not found.
+        """
+        tag = self.get_by_id(tag_id)
+        if not tag:
+            return False
+        self.session.delete(tag)
+        self.session.flush()
+        return True
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Asset-Tag Association
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def get_tags_for_asset(self, asset_id: int) -> Sequence[Tag]:
+        """Get all tags attached to an asset."""
+        stmt = (
+            select(Tag)
+            .join(asset_tags, Tag.id == asset_tags.c.tag_id)
+            .where(asset_tags.c.asset_id == asset_id)
+            .order_by(Tag.name)
+        )
+        return self.session.scalars(stmt).all()
+
+    def get_assets_for_tag(self, tag_id: int) -> Sequence[Asset]:
+        """Get all assets with a specific tag."""
+        stmt = (
+            select(Asset)
+            .join(asset_tags, Asset.id == asset_tags.c.asset_id)
+            .where(asset_tags.c.tag_id == tag_id)
+            .order_by(Asset.ticker)
+        )
+        return self.session.scalars(stmt).all()
+
+    def attach_tag(self, asset_id: int, tag_id: int) -> bool:
+        """
+        Attach a tag to an asset.
+        
+        Returns:
+            True if attached, False if already attached or invalid IDs.
+        """
+        # Check if already attached
+        stmt = select(asset_tags).where(
+            asset_tags.c.asset_id == asset_id,
+            asset_tags.c.tag_id == tag_id,
+        )
+        if self.session.execute(stmt).first():
+            return False  # Already attached
+        
+        # Insert association
+        self.session.execute(
+            asset_tags.insert().values(asset_id=asset_id, tag_id=tag_id)
+        )
+        self.session.flush()
+        return True
+
+    def detach_tag(self, asset_id: int, tag_id: int) -> bool:
+        """
+        Detach a tag from an asset.
+        
+        Returns:
+            True if detached, False if was not attached.
+        """
+        result = self.session.execute(
+            asset_tags.delete().where(
+                asset_tags.c.asset_id == asset_id,
+                asset_tags.c.tag_id == tag_id,
+            )
+        )
+        self.session.flush()
+        return result.rowcount > 0
+
+    def set_asset_tags(self, asset_id: int, tag_ids: list[int]) -> None:
+        """
+        Set the tags for an asset (replace all existing tags).
+        
+        Args:
+            asset_id: The asset to update
+            tag_ids: List of tag IDs to attach (empty list removes all tags)
+        """
+        # Remove all existing tags
+        self.session.execute(
+            asset_tags.delete().where(asset_tags.c.asset_id == asset_id)
+        )
+        # Add new tags
+        if tag_ids:
+            for tag_id in tag_ids:
+                self.session.execute(
+                    asset_tags.insert().values(asset_id=asset_id, tag_id=tag_id)
+                )
+        self.session.flush()
+
+    def attach_tag_to_assets(self, tag_id: int, asset_ids: list[int]) -> int:
+        """
+        Attach a tag to multiple assets.
+        
+        Returns:
+            Number of new attachments made.
+        """
+        count = 0
+        for asset_id in asset_ids:
+            if self.attach_tag(asset_id, tag_id):
+                count += 1
+        return count
+
+    def detach_tag_from_assets(self, tag_id: int, asset_ids: list[int]) -> int:
+        """
+        Detach a tag from multiple assets.
+        
+        Returns:
+            Number of detachments made.
+        """
+        count = 0
+        for asset_id in asset_ids:
+            if self.detach_tag(asset_id, tag_id):
+                count += 1
+        return count
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Filtering Assets by Tags
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def get_assets_by_tags(
+        self,
+        tag_ids: list[int],
+        status: AssetStatus | None = None,
+    ) -> Sequence[Asset]:
+        """
+        Get assets that have ANY of the specified tags (OR semantics).
+        
+        Args:
+            tag_ids: List of tag IDs to filter by
+            status: Optional status filter (OWNED, WATCHLIST)
+            
+        Returns:
+            Assets matching any of the tags, ordered by ticker.
+        """
+        if not tag_ids:
+            return []
+        
+        stmt = (
+            select(Asset)
+            .distinct()
+            .join(asset_tags, Asset.id == asset_tags.c.asset_id)
+            .where(asset_tags.c.tag_id.in_(tag_ids))
+        )
+        
+        if status:
+            stmt = stmt.where(Asset.status == status)
+        
+        stmt = stmt.order_by(Asset.ticker)
+        return self.session.scalars(stmt).all()
+
+    def get_assets_by_tag_names(
+        self,
+        tag_names: list[str],
+        status: AssetStatus | None = None,
+    ) -> Sequence[Asset]:
+        """
+        Get assets that have ANY of the specified tags by name (OR semantics).
+        
+        Args:
+            tag_names: List of tag names to filter by (case-insensitive)
+            status: Optional status filter
+            
+        Returns:
+            Assets matching any of the tags, ordered by ticker.
+        """
+        if not tag_names:
+            return []
+        
+        lower_names = [n.lower() for n in tag_names]
+        stmt = (
+            select(Asset)
+            .distinct()
+            .join(asset_tags, Asset.id == asset_tags.c.asset_id)
+            .join(Tag, asset_tags.c.tag_id == Tag.id)
+            .where(func.lower(Tag.name).in_(lower_names))
+        )
+        
+        if status:
+            stmt = stmt.where(Asset.status == status)
+        
+        stmt = stmt.order_by(Asset.ticker)
+        return self.session.scalars(stmt).all()
+
+    def get_untagged_assets(self, status: AssetStatus | None = None) -> Sequence[Asset]:
+        """
+        Get assets that have no tags attached.
+        
+        Args:
+            status: Optional status filter
+            
+        Returns:
+            Untagged assets ordered by ticker.
+        """
+        # Subquery to find assets that have at least one tag
+        tagged_asset_ids = select(asset_tags.c.asset_id).distinct()
+        
+        stmt = select(Asset).where(Asset.id.not_in(tagged_asset_ids))
+        
+        if status:
+            stmt = stmt.where(Asset.status == status)
+        
+        stmt = stmt.order_by(Asset.ticker)
+        return self.session.scalars(stmt).all()
