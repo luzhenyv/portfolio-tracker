@@ -49,6 +49,17 @@ from services.note_service import (
     pin_note,
     NoteResult,
 )
+from services.tag_service import (
+    get_all_tags_with_counts,
+    create_tag,
+    rename_tag,
+    delete_tag,
+    get_tags_for_ticker,
+    set_asset_tags_by_names,
+    get_assets_by_tag_names,
+    get_untagged_assets,
+)
+from services.asset_service import delete_assets
 from db.models import NoteType, NoteTargetKind
 
 
@@ -72,7 +83,7 @@ def render_sidebar() -> str:
     st.sidebar.markdown("---")
 
     # Build page list based on config
-    pages = ["Overview", "Positions", "Watchlist", "Notes"]
+    pages = ["Overview", "Positions", "Watchlist", "Assets & Tags", "Notes"]
     if config.ui.enable_admin_ui:
         pages.append("Admin")
 
@@ -1973,6 +1984,444 @@ def _render_note_card(note, show_target: bool = False):
                     st.rerun()
 
 
+def render_assets_tags_page():
+    """
+    Render Assets & Tags management page.
+
+    Provides:
+    - Asset CRUD (add, view, delete assets)
+    - Tag CRUD (create, rename, delete tags)
+    - Asset-tag associations (attach/detach tags)
+    - Asset filtering by tags
+    """
+    from db import get_db
+    from db.repositories import AssetRepository
+
+    st.header("🏷️ Assets & Tags")
+    st.caption("Manage your assets and organize them with tags")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TABS: Assets | Tags
+    # ═══════════════════════════════════════════════════════════════════════════
+    assets_tab, tags_tab = st.tabs(["📊 Assets", "🏷️ Tags"])
+
+    # Get tag data for both tabs
+    tag_result = get_all_tags_with_counts()
+    all_tag_names = [t.tag.name for t in tag_result.tags] if tag_result.tags else []
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ASSETS TAB
+    # ═══════════════════════════════════════════════════════════════════════════
+    with assets_tab:
+        # --- Filter Controls ---
+        st.subheader("🔍 Filter Assets")
+
+        filter_col1, filter_col2, filter_col3 = st.columns([2, 2, 1])
+
+        with filter_col1:
+            status_filter = st.selectbox(
+                "Status",
+                options=["All", "OWNED", "WATCHLIST"],
+                index=0,
+                key="asset_status_filter",
+            )
+
+        with filter_col2:
+            if all_tag_names:
+                tag_filter = st.multiselect(
+                    "Filter by Tags",
+                    options=all_tag_names,
+                    placeholder="Select tags to filter...",
+                    key="asset_tag_filter",
+                )
+            else:
+                tag_filter = []
+                st.caption("No tags available")
+
+        with filter_col3:
+            show_untagged = st.checkbox("Untagged only", key="show_untagged_only")
+
+        st.divider()
+
+        # --- Fetch and filter assets ---
+        db = get_db()
+        with db.session() as session:
+            asset_repo = AssetRepository(session)
+
+            if show_untagged:
+                # Show only untagged assets
+                status_enum = None
+                if status_filter == "OWNED":
+                    status_enum = AssetStatus.OWNED
+                elif status_filter == "WATCHLIST":
+                    status_enum = AssetStatus.WATCHLIST
+                assets_list = get_untagged_assets(status=status_enum)
+            elif tag_filter:
+                # Filter by selected tags
+                status_enum = None
+                if status_filter == "OWNED":
+                    status_enum = AssetStatus.OWNED
+                elif status_filter == "WATCHLIST":
+                    status_enum = AssetStatus.WATCHLIST
+                assets_list = get_assets_by_tag_names(tag_filter, status=status_enum)
+            else:
+                # Show all assets based on status filter
+                if status_filter == "OWNED":
+                    assets_list = list(asset_repo.get_by_status(AssetStatus.OWNED))
+                elif status_filter == "WATCHLIST":
+                    assets_list = list(asset_repo.get_by_status(AssetStatus.WATCHLIST))
+                else:
+                    assets_list = list(asset_repo.get_all())
+
+        # Sort assets by ticker
+        assets_list = sorted(assets_list, key=lambda a: a.ticker)
+
+        st.markdown(f"**{len(assets_list)} Assets**")
+
+        # --- Asset List with Tag Editing ---
+        if assets_list:
+            for asset in assets_list:
+                with st.container(border=True):
+                    col_info, col_tags, col_actions = st.columns([2, 4, 1])
+
+                    with col_info:
+                        st.markdown(f"**{asset.ticker}**")
+                        status_badge = "🟢" if asset.status == AssetStatus.OWNED else "👁️"
+                        st.caption(f"{status_badge} {asset.status.value} · {asset.asset_type.value}")
+                        if asset.name:
+                            st.caption(asset.name[:35] + "..." if len(asset.name or "") > 35 else asset.name)
+
+                    with col_tags:
+                        current_tags = get_tags_for_ticker(asset.ticker)
+                        if current_tags:
+                            tag_pills = " ".join([f"`{tag.name}`" for tag in current_tags])
+                            st.markdown(f"Tags: {tag_pills}")
+                        else:
+                            st.caption("_No tags_")
+
+                    with col_actions:
+                        btn_col1, btn_col2 = st.columns(2)
+                        with btn_col1:
+                            if st.button("🏷️", key=f"edit_tags_{asset.id}", help="Edit tags"):
+                                st.session_state[f"editing_asset_tags_{asset.id}"] = True
+                                st.rerun()
+                        with btn_col2:
+                            if st.button("🗑️", key=f"delete_asset_{asset.id}", help="Delete asset"):
+                                st.session_state[f"deleting_asset_{asset.id}"] = True
+                                st.rerun()
+
+                    # --- Inline Tag Editor ---
+                    if st.session_state.get(f"editing_asset_tags_{asset.id}", False):
+                        with st.form(f"edit_tags_form_{asset.id}"):
+                            st.markdown(f"**Edit tags for {asset.ticker}**")
+
+                            current_tag_names = [tag.name for tag in current_tags]
+
+                            if all_tag_names:
+                                selected_tags = st.multiselect(
+                                    "Select existing tags",
+                                    options=all_tag_names,
+                                    default=[t for t in current_tag_names if t in all_tag_names],
+                                    key=f"select_tags_{asset.id}",
+                                )
+                            else:
+                                selected_tags = []
+                                st.caption("No existing tags")
+
+                            new_tags_input = st.text_input(
+                                "Add new tags (comma-separated)",
+                                placeholder="AI, Semiconductor, Cloud",
+                                key=f"new_tags_input_{asset.id}",
+                            )
+
+                            form_col1, form_col2 = st.columns(2)
+
+                            if form_col1.form_submit_button("Save Tags", type="primary"):
+                                all_tags = selected_tags.copy()
+                                if new_tags_input.strip():
+                                    new_tags_list = [t.strip() for t in new_tags_input.split(",") if t.strip()]
+                                    all_tags.extend(new_tags_list)
+                                all_tags = list(set(all_tags))
+
+                                result = set_asset_tags_by_names(asset.id, all_tags)
+                                if result.success:
+                                    st.success(result.message)
+                                    del st.session_state[f"editing_asset_tags_{asset.id}"]
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    st.error(result.message)
+
+                            if form_col2.form_submit_button("Cancel"):
+                                del st.session_state[f"editing_asset_tags_{asset.id}"]
+                                st.rerun()
+
+                    # --- Delete Confirmation ---
+                    if st.session_state.get(f"deleting_asset_{asset.id}", False):
+                        st.warning(
+                            f"⚠️ **Delete {asset.ticker}?**\n\n"
+                            "This will remove the asset and all related data (prices, fundamentals, valuations, notes)."
+                        )
+
+                        if asset.status == AssetStatus.OWNED:
+                            st.error("⚠️ This asset is OWNED. Deletion will be blocked if it has positions or trades.")
+
+                        del_col1, del_col2 = st.columns(2)
+
+                        if del_col1.button("🗑️ Confirm Delete", key=f"confirm_del_{asset.id}", type="primary"):
+                            result = delete_assets(
+                                tickers=[asset.ticker],
+                                allow_owned=True,
+                                allow_with_trades=False,
+                                allow_with_active_position=False,
+                            )
+
+                            if result.deleted:
+                                st.success(f"✅ Deleted {asset.ticker}")
+                                del st.session_state[f"deleting_asset_{asset.id}"]
+                                time.sleep(1)
+                                st.rerun()
+                            elif result.blocked:
+                                st.error(f"❌ Blocked: {result.blocked[0]['reason']}")
+                            else:
+                                st.error("❌ Delete failed")
+
+                        if del_col2.button("Cancel", key=f"cancel_del_{asset.id}"):
+                            del st.session_state[f"deleting_asset_{asset.id}"]
+                            st.rerun()
+
+        else:
+            st.info("No assets match the current filters.")
+
+        st.divider()
+
+        # --- Add New Asset ---
+        st.subheader("➕ Add New Asset")
+
+        with st.form("add_new_asset_form", clear_on_submit=True):
+            add_col1, add_col2, add_col3 = st.columns([2, 2, 2])
+
+            with add_col1:
+                new_ticker_input = st.text_input(
+                    "Ticker Symbol *",
+                    placeholder="e.g., AAPL, TSLA",
+                )
+                new_ticker = new_ticker_input.upper().strip() if new_ticker_input else ""
+
+            with add_col2:
+                new_asset_status = st.selectbox(
+                    "Status",
+                    options=["WATCHLIST", "OWNED"],
+                    index=0,
+                )
+
+            with add_col3:
+                new_asset_type = st.selectbox(
+                    "Asset Type",
+                    options=["STOCK", "ETF", "CRYPTO", "BOND", "DERIVATIVE"],
+                    index=0,
+                )
+
+            # Tags for new asset
+            if all_tag_names:
+                new_asset_tags = st.multiselect(
+                    "Tags (optional)",
+                    options=all_tag_names,
+                    placeholder="Select tags for this asset...",
+                    key="new_asset_tags_select",
+                )
+            else:
+                new_asset_tags = []
+
+            add_submitted = st.form_submit_button("Add Asset", type="primary")
+
+            if add_submitted:
+                if not new_ticker:
+                    st.error("❌ Ticker symbol is required")
+                else:
+                    with st.spinner(f"Validating {new_ticker}..."):
+                        import yfinance as yf
+
+                        try:
+                            ticker_obj = yf.Ticker(new_ticker)
+                            info = ticker_obj.info
+
+                            if not info or len(info) <= 5 or info.get("regularMarketPrice") is None:
+                                st.error(
+                                    f"❌ **Ticker '{new_ticker}' not found**\n\n"
+                                    "The ticker symbol does not exist in Yahoo Finance or has no price data."
+                                )
+                            else:
+                                with st.spinner(f"Adding {new_ticker}..."):
+                                    status = (
+                                        AssetStatus.OWNED
+                                        if new_asset_status == "OWNED"
+                                        else AssetStatus.WATCHLIST
+                                    )
+                                    result = create_asset_with_data(
+                                        new_ticker, status, asset_type=AssetType(new_asset_type)
+                                    )
+
+                                if result.success:
+                                    # Attach tags if selected
+                                    if new_asset_tags and result.asset:
+                                        set_asset_tags_by_names(result.asset.id, new_asset_tags)
+
+                                    st.success(
+                                        f"✅ Added {new_ticker}\n\n"
+                                        f"Prices fetched: {result.prices_fetched}\n\n"
+                                        f"{result.status_message}"
+                                    )
+                                    time.sleep(2)
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Failed: {', '.join(result.errors)}")
+                        except Exception as e:
+                            st.error(
+                                f"❌ **Unable to validate ticker '{new_ticker}'**\n\n"
+                                f"Error: {str(e)}"
+                            )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TAGS TAB
+    # ═══════════════════════════════════════════════════════════════════════════
+    with tags_tab:
+        tag_col1, tag_col2 = st.columns([1, 1])
+
+        # --- Left Column: Tag List ---
+        with tag_col1:
+            st.subheader("📋 All Tags")
+
+            if tag_result.tags:
+                for tag_with_count in tag_result.tags:
+                    tag = tag_with_count.tag
+                    count = tag_with_count.asset_count
+
+                    with st.container(border=True):
+                        col_name, col_count, col_actions = st.columns([3, 1, 2])
+
+                        with col_name:
+                            st.markdown(f"**{tag.name}**")
+                            if tag.description:
+                                st.caption(tag.description[:50])
+
+                        with col_count:
+                            st.metric("Assets", count, label_visibility="collapsed")
+
+                        with col_actions:
+                            act_col1, act_col2 = st.columns(2)
+
+                            with act_col1:
+                                if st.button("✏️", key=f"edit_tag_{tag.id}", help="Rename tag"):
+                                    st.session_state[f"editing_tag_{tag.id}"] = True
+                                    st.rerun()
+
+                            with act_col2:
+                                if st.button("🗑️", key=f"delete_tag_{tag.id}", help="Delete tag"):
+                                    st.session_state[f"deleting_tag_{tag.id}"] = True
+                                    st.rerun()
+
+                        # --- Rename Form ---
+                        if st.session_state.get(f"editing_tag_{tag.id}", False):
+                            with st.form(f"rename_tag_form_{tag.id}"):
+                                new_name = st.text_input("New Name", value=tag.name, key=f"rename_input_{tag.id}")
+
+                                rename_col1, rename_col2 = st.columns(2)
+
+                                if rename_col1.form_submit_button("Save", type="primary"):
+                                    if new_name.strip() and new_name.strip() != tag.name:
+                                        result = rename_tag(tag.id, new_name.strip())
+                                        if result.success:
+                                            st.success(result.message)
+                                            del st.session_state[f"editing_tag_{tag.id}"]
+                                            time.sleep(1)
+                                            st.rerun()
+                                        else:
+                                            st.error(result.message)
+                                    else:
+                                        del st.session_state[f"editing_tag_{tag.id}"]
+                                        st.rerun()
+
+                                if rename_col2.form_submit_button("Cancel"):
+                                    del st.session_state[f"editing_tag_{tag.id}"]
+                                    st.rerun()
+
+                        # --- Delete Confirmation ---
+                        if st.session_state.get(f"deleting_tag_{tag.id}", False):
+                            st.warning(f"⚠️ Delete tag **{tag.name}**? ({count} assets will be untagged)")
+
+                            del_col1, del_col2 = st.columns(2)
+
+                            if del_col1.button("🗑️ Confirm", key=f"confirm_del_tag_{tag.id}", type="primary"):
+                                result = delete_tag(tag.id)
+                                if result.success:
+                                    st.success(result.message)
+                                    del st.session_state[f"deleting_tag_{tag.id}"]
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    st.error(result.message)
+
+                            if del_col2.button("Cancel", key=f"cancel_del_tag_{tag.id}"):
+                                del st.session_state[f"deleting_tag_{tag.id}"]
+                                st.rerun()
+
+            else:
+                st.info("No tags yet. Create your first tag!")
+
+        # --- Right Column: Create Tag ---
+        with tag_col2:
+            st.subheader("➕ Create New Tag")
+
+            with st.form("create_tag_form", clear_on_submit=True):
+                tag_name = st.text_input(
+                    "Tag Name *",
+                    placeholder="e.g., AI, Dividend, Growth",
+                )
+                tag_description = st.text_input(
+                    "Description (optional)",
+                    placeholder="Brief description of this tag",
+                )
+
+                create_submitted = st.form_submit_button("Create Tag", type="primary")
+
+                if create_submitted:
+                    if not tag_name.strip():
+                        st.error("Tag name is required")
+                    else:
+                        result = create_tag(
+                            name=tag_name.strip(),
+                            description=tag_description.strip() or None,
+                        )
+                        if result.success:
+                            st.success(result.message)
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(result.message)
+
+            st.divider()
+
+            # --- Tag Usage Summary ---
+            st.subheader("📈 Tag Summary")
+
+            if tag_result.tags:
+                summary_data = []
+                for twc in tag_result.tags:
+                    summary_data.append({
+                        "Tag": twc.tag.name,
+                        "Assets": twc.asset_count,
+                    })
+
+                st.dataframe(
+                    pd.DataFrame(summary_data),
+                    hide_index=True,
+                    use_container_width=True,
+                )
+            else:
+                st.caption("No tags to summarize")
+
+
 def main():
     """Main application entry point."""
     configure_page()
@@ -1987,6 +2436,8 @@ def main():
         render_positions_page()
     elif page == "Watchlist":
         render_watchlist_page()
+    elif page == "Assets & Tags":
+        render_assets_tags_page()
     elif page == "Notes":
         render_notes_page()
     elif page == "Admin":
