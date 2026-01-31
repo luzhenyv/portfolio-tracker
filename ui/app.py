@@ -1121,9 +1121,9 @@ def render_admin_page():
 
                         st.markdown(
                             f"**{action_emoji} {ticker}** / {trade.action.value} / "
-                            f"{int(trade.shares)} shares @ ${trade.price:.2f} / "
-                            f"Fees: ${trade.fees or 0:.2f} / "
-                            f"P&L: ${trade.realized_pnl or 0:.2f}"
+                            f"{int(trade.shares)} shares @ \${trade.price:.2f} / "
+                            f"Fees: \${trade.fees or 0:.2f} / "
+                            f"P&L: \${trade.realized_pnl or 0:.2f}"
                         )
                         st.caption(f"ID: {trade_id} · {date_str}")
 
