@@ -723,7 +723,7 @@ def _render_efficient_frontier_section(portfolio_df: pd.DataFrame, summary: dict
     with st.spinner("Computing optimal portfolios..."):
         frontier = compute_efficient_frontier(
             current_weights=current_weights,
-            n_portfolios=500,
+            n_portfolios=5000,
         )
 
     if frontier is None:
@@ -846,7 +846,7 @@ def _render_efficient_frontier_section(portfolio_df: pd.DataFrame, summary: dict
             y=0.99,
             xanchor="left",
             x=0.01,
-            bgcolor="rgba(255,255,255,0.8)",
+            bgcolor="rgba(255,255,255,0.5)",
         ),
         hovermode="closest",
         height=500,

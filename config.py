@@ -187,7 +187,7 @@ class RiskConfig:
     min_price_history_days: int = 60
     
     # Risk-free rate for Sharpe ratio (annual, e.g., 0.04 = 4%)
-    risk_free_rate: float = 0.04
+    risk_free_rate: float = 0.0366
 
 
 @dataclass(frozen=True)
