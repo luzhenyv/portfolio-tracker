@@ -121,6 +121,57 @@ class AssetRepository:
             self.session.flush()
         return asset
 
+    def get_by_tickers(self, tickers: list[str]) -> Sequence[Asset]:
+        """Get assets by list of tickers."""
+        if not tickers:
+            return []
+        upper_tickers = [t.upper() for t in tickers]
+        stmt = select(Asset).where(Asset.ticker.in_(upper_tickers))
+        return self.session.scalars(stmt).all()
+
+    def delete_asset(self, asset_id: int) -> bool:
+        """
+        Delete an asset and all related data.
+        
+        Relies on ON DELETE CASCADE for:
+        - prices_daily
+        - fundamentals_quarterly
+        - valuation_metrics
+        - valuation_metric_overrides
+        - watchlist_targets
+        - investment_thesis
+        - trades
+        - positions
+        - note_targets (and cascaded notes)
+        
+        Returns:
+            True if deleted, False if asset not found.
+        """
+        asset = self.get_by_id(asset_id)
+        if not asset:
+            return False
+        
+        self.session.delete(asset)
+        self.session.flush()
+        return True
+
+    def has_trades(self, asset_id: int) -> bool:
+        """Check if an asset has any trade records."""
+        stmt = select(func.count(Trade.id)).where(Trade.asset_id == asset_id)
+        count = self.session.scalar(stmt) or 0
+        return count > 0
+
+    def has_position(self, asset_id: int) -> bool:
+        """Check if an asset has an active position (non-zero shares)."""
+        stmt = (
+            select(Position)
+            .where(
+                Position.asset_id == asset_id,
+                (Position.long_shares > 0) | (Position.short_shares > 0)
+            )
+        )
+        return self.session.scalar(stmt) is not None
+
 
 class PriceRepository:
     """Repository for price data operations."""

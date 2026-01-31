@@ -285,3 +285,131 @@ def get_all_tickers() -> list[str]:
         asset_repo = AssetRepository(session)
         return sorted([a.ticker for a in asset_repo.get_all()])
 
+
+def get_watchlist_tickers() -> list[str]:
+    """Get sorted list of watchlist tickers only."""
+    db = get_db()
+    with db.session() as session:
+        asset_repo = AssetRepository(session)
+        return sorted([a.ticker for a in asset_repo.get_watchlist_assets()])
+
+
+@dataclass
+class DeleteResult:
+    """Result of a batch delete operation."""
+    deleted: list[str]
+    blocked: list[dict]  # {"ticker": str, "reason": str}
+    not_found: list[str]
+    errors: list[dict]  # {"ticker": str, "error": str}
+    
+    @property
+    def success_count(self) -> int:
+        return len(self.deleted)
+    
+    @property
+    def blocked_count(self) -> int:
+        return len(self.blocked)
+    
+    @property
+    def total_requested(self) -> int:
+        return len(self.deleted) + len(self.blocked) + len(self.not_found) + len(self.errors)
+
+
+def delete_watchlist_assets(tickers: list[str]) -> DeleteResult:
+    """
+    Delete one or more watchlist assets and all their related data.
+    
+    This function safely deletes WATCHLIST assets, blocking deletion of:
+    - OWNED assets (must sell positions first)
+    - Assets with active positions (non-zero shares)
+    - Assets with trade history (safety check)
+    
+    The deletion cascades to remove all related data:
+    - prices_daily
+    - fundamentals_quarterly
+    - valuation_metrics
+    - valuation_metric_overrides
+    - watchlist_targets
+    - investment_thesis
+    - trades (if any, but blocked for safety)
+    - positions (if any, but blocked for safety)
+    
+    Args:
+        tickers: List of ticker symbols to delete
+        
+    Returns:
+        DeleteResult with deleted, blocked, not_found, and errors lists
+    """
+    deleted = []
+    blocked = []
+    not_found = []
+    errors = []
+    
+    if not tickers:
+        return DeleteResult(deleted=deleted, blocked=blocked, not_found=not_found, errors=errors)
+    
+    db = get_db()
+    
+    with db.session() as session:
+        asset_repo = AssetRepository(session)
+        
+        # Fetch all requested assets in one query
+        assets = asset_repo.get_by_tickers(tickers)
+        found_tickers = {a.ticker: a for a in assets}
+        
+        for ticker in tickers:
+            ticker_upper = ticker.upper()
+            
+            if ticker_upper not in found_tickers:
+                not_found.append(ticker_upper)
+                continue
+            
+            asset = found_tickers[ticker_upper]
+            
+            # Block deletion of OWNED assets
+            if asset.status == AssetStatus.OWNED:
+                blocked.append({
+                    "ticker": ticker_upper,
+                    "reason": "Asset is OWNED (sell all positions first)"
+                })
+                continue
+            
+            # Block if asset has active position
+            if asset_repo.has_position(asset.id):
+                blocked.append({
+                    "ticker": ticker_upper,
+                    "reason": "Asset has active position"
+                })
+                continue
+            
+            # Block if asset has trade history (extra safety)
+            if asset_repo.has_trades(asset.id):
+                blocked.append({
+                    "ticker": ticker_upper,
+                    "reason": "Asset has trade history"
+                })
+                continue
+            
+            # Safe to delete
+            try:
+                if asset_repo.delete_asset(asset.id):
+                    deleted.append(ticker_upper)
+                    logger.info(f"Deleted watchlist asset: {ticker_upper}")
+                else:
+                    errors.append({
+                        "ticker": ticker_upper,
+                        "error": "Delete operation returned False"
+                    })
+            except Exception as e:
+                logger.error(f"Failed to delete {ticker_upper}: {e}")
+                errors.append({
+                    "ticker": ticker_upper,
+                    "error": str(e)
+                })
+        
+        # Commit all successful deletes
+        session.commit()
+    
+    return DeleteResult(deleted=deleted, blocked=blocked, not_found=not_found, errors=errors)
+
+
