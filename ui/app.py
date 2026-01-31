@@ -342,8 +342,7 @@ def render_overview_page():
         if nav_series and len(nav_series.daily) > 0:
             st.markdown("")
             st.caption(
-                f"Normalized Performance (First Day = 1.0) — {st.session_state.selected_horizon}",
-                text_alignment="right",
+                f"Normalized Performance (First Day = 1.0) — {st.session_state.selected_horizon}"
             )
 
             # Build DataFrame for portfolio NAV (normalized)
@@ -788,9 +787,9 @@ def render_admin_page():
                         if trade_cost > cash_balance:
                             st.error(
                                 f"❌ **Insufficient cash**\n\n"
-                                f"Trade cost: \${trade_cost:,.2f}\n\n"
-                                f"Available: \${cash_balance:,.2f}\n\n"
-                                f"Shortfall: \${trade_cost - cash_balance:,.2f}\n\n"
+                                f"Trade cost: ${trade_cost:,.2f}\n\n"
+                                f"Available: ${cash_balance:,.2f}\n\n"
+                                f"Shortfall: ${trade_cost - cash_balance:,.2f}\n\n"
                                 f"⚠️ Negative cash balance is not allowed. Please deposit funds first."
                             )
                         else:
@@ -807,12 +806,12 @@ def render_admin_page():
                             if result.success:
                                 st.success(
                                     f"✅ **BUY executed**\n\n"
-                                    f"{shares:,.2f} shares of {ticker} @ \${price:,.2f}\n\n"
-                                    f"Total cost: \${trade_cost:,.2f}\n\n"
+                                    f"{shares:,.2f} shares of {ticker} @ ${price:,.2f}\n\n"
+                                    f"Total cost: ${trade_cost:,.2f}\n\n"
                                     f"{result.status_message}"
                                 )
                                 new_balance = get_current_cash_balance()
-                                st.info(f"💵 New cash balance: \${new_balance:,.2f}")
+                                st.info(f"💵 New cash balance: ${new_balance:,.2f}")
                                 celebrate_and_rerun()
                             else:
                                 st.error(f"❌ Trade failed: {', '.join(result.errors)}")
@@ -832,15 +831,15 @@ def render_admin_page():
                             proceeds = shares * price - fees
                             st.success(
                                 f"✅ **SELL executed**\n\n"
-                                f"{shares:,.2f} shares of {ticker} @ \${price:,.2f}\n\n"
-                                f"Net proceeds: \${proceeds:,.2f}\n\n"
+                                f"{shares:,.2f} shares of {ticker} @ ${price:,.2f}\n\n"
+                                f"Net proceeds: ${proceeds:,.2f}\n\n"
                                 f"{result.status_message}"
                             )
                             if result.realized_pnl and result.realized_pnl != 0:
                                 pnl_emoji = "📈" if result.realized_pnl > 0 else "📉"
-                                st.info(f"{pnl_emoji} Realized P&L: \${result.realized_pnl:+,.2f}")
+                                st.info(f"{pnl_emoji} Realized P&L: ${result.realized_pnl:+,.2f}")
                             new_balance = get_current_cash_balance()
-                            st.info(f"💵 New cash balance: \${new_balance:,.2f}")
+                            st.info(f"💵 New cash balance: ${new_balance:,.2f}")
                             celebrate_and_rerun()
                         else:
                             st.error(f"❌ Trade failed: {', '.join(result.errors)}")
@@ -1122,9 +1121,9 @@ def render_admin_page():
 
                         st.markdown(
                             f"**{action_emoji} {ticker}** / {trade.action.value} / "
-                            f"{int(trade.shares)} shares @ \${trade.price:.2f} / "
-                            f"Fees: \${trade.fees or 0:.2f} / "
-                            f"P&L: \${trade.realized_pnl or 0:.2f}"
+                            f"{int(trade.shares)} shares @ ${trade.price:.2f} / "
+                            f"Fees: ${trade.fees or 0:.2f} / "
+                            f"P&L: ${trade.realized_pnl or 0:.2f}"
                         )
                         st.caption(f"ID: {trade_id} · {date_str}")
 
