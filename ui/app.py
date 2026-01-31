@@ -2234,88 +2234,89 @@ def render_assets_tags_page():
         with tag_col1:
             st.subheader("📋 Tag List")
 
-            if tag_result.tags:
-                for tag_with_count in tag_result.tags:
-                    tag = tag_with_count.tag
-                    count = tag_with_count.asset_count
+            with st.container(height=360, border=False):
+                if tag_result.tags:
+                    for tag_with_count in tag_result.tags:
+                        tag = tag_with_count.tag
+                        count = tag_with_count.asset_count
 
-                    with st.container(border=True):
-                        col_name, col_count, col_actions = st.columns([3, 1, 2])
+                        with st.container(border=True):
+                            col_name, col_count, col_actions = st.columns([3, 1, 2])
 
-                        with col_name:
-                            st.markdown(f"**{tag.name}**")
-                            if tag.description:
-                                st.caption(tag.description[:50])
+                            with col_name:
+                                st.markdown(f"**{tag.name}**")
+                                if tag.description:
+                                    st.caption(tag.description[:50])
 
-                        with col_count:
-                            st.metric("Assets", count, label_visibility="collapsed")
+                            with col_count:
+                                st.metric("Assets", count, label_visibility="collapsed")
 
-                        with col_actions:
-                            act_col1, act_col2 = st.columns(2)
+                            with col_actions:
+                                act_col1, act_col2 = st.columns(2)
 
-                            with act_col1:
-                                if st.button("✏️", key=f"edit_tag_{tag.id}", help="Rename tag"):
-                                    st.session_state[f"editing_tag_{tag.id}"] = True
-                                    st.rerun()
+                                with act_col1:
+                                    if st.button("✏️", key=f"edit_tag_{tag.id}", help="Rename tag"):
+                                        st.session_state[f"editing_tag_{tag.id}"] = True
+                                        st.rerun()
 
-                            with act_col2:
-                                if st.button("🗑️", key=f"delete_tag_{tag.id}", help="Delete tag"):
-                                    st.session_state[f"deleting_tag_{tag.id}"] = True
-                                    st.rerun()
+                                with act_col2:
+                                    if st.button("🗑️", key=f"delete_tag_{tag.id}", help="Delete tag"):
+                                        st.session_state[f"deleting_tag_{tag.id}"] = True
+                                        st.rerun()
 
-                        # --- Rename Form ---
-                        if st.session_state.get(f"editing_tag_{tag.id}", False):
-                            with st.form(f"rename_tag_form_{tag.id}"):
-                                new_name = st.text_input(
-                                    "New Name", value=tag.name, key=f"rename_input_{tag.id}"
-                                )
+                            # --- Rename Form ---
+                            if st.session_state.get(f"editing_tag_{tag.id}", False):
+                                with st.form(f"rename_tag_form_{tag.id}"):
+                                    new_name = st.text_input(
+                                        "New Name", value=tag.name, key=f"rename_input_{tag.id}"
+                                    )
 
-                                rename_col1, rename_col2 = st.columns(2)
+                                    rename_col1, rename_col2 = st.columns(2)
 
-                                if rename_col1.form_submit_button("Save", type="primary"):
-                                    if new_name.strip() and new_name.strip() != tag.name:
-                                        result = rename_tag(tag.id, new_name.strip())
-                                        if result.success:
-                                            st.success(result.message)
-                                            del st.session_state[f"editing_tag_{tag.id}"]
-                                            time.sleep(1)
-                                            st.rerun()
+                                    if rename_col1.form_submit_button("Save", type="primary"):
+                                        if new_name.strip() and new_name.strip() != tag.name:
+                                            result = rename_tag(tag.id, new_name.strip())
+                                            if result.success:
+                                                st.success(result.message)
+                                                del st.session_state[f"editing_tag_{tag.id}"]
+                                                time.sleep(1)
+                                                st.rerun()
+                                            else:
+                                                st.error(result.message)
                                         else:
-                                            st.error(result.message)
-                                    else:
+                                            del st.session_state[f"editing_tag_{tag.id}"]
+                                            st.rerun()
+
+                                    if rename_col2.form_submit_button("Cancel"):
                                         del st.session_state[f"editing_tag_{tag.id}"]
                                         st.rerun()
 
-                                if rename_col2.form_submit_button("Cancel"):
-                                    del st.session_state[f"editing_tag_{tag.id}"]
-                                    st.rerun()
+                            # --- Delete Confirmation ---
+                            if st.session_state.get(f"deleting_tag_{tag.id}", False):
+                                st.warning(
+                                    f"⚠️ Delete tag **{tag.name}**? ({count} assets will be untagged)"
+                                )
 
-                        # --- Delete Confirmation ---
-                        if st.session_state.get(f"deleting_tag_{tag.id}", False):
-                            st.warning(
-                                f"⚠️ Delete tag **{tag.name}**? ({count} assets will be untagged)"
-                            )
+                                del_col1, del_col2 = st.columns(2)
 
-                            del_col1, del_col2 = st.columns(2)
+                                if del_col1.button(
+                                    "🗑️ Confirm", key=f"confirm_del_tag_{tag.id}", type="primary"
+                                ):
+                                    result = delete_tag(tag.id)
+                                    if result.success:
+                                        st.success(result.message)
+                                        del st.session_state[f"deleting_tag_{tag.id}"]
+                                        time.sleep(1)
+                                        st.rerun()
+                                    else:
+                                        st.error(result.message)
 
-                            if del_col1.button(
-                                "🗑️ Confirm", key=f"confirm_del_tag_{tag.id}", type="primary"
-                            ):
-                                result = delete_tag(tag.id)
-                                if result.success:
-                                    st.success(result.message)
+                                if del_col2.button("Cancel", key=f"cancel_del_tag_{tag.id}"):
                                     del st.session_state[f"deleting_tag_{tag.id}"]
-                                    time.sleep(1)
                                     st.rerun()
-                                else:
-                                    st.error(result.message)
 
-                            if del_col2.button("Cancel", key=f"cancel_del_tag_{tag.id}"):
-                                del st.session_state[f"deleting_tag_{tag.id}"]
-                                st.rerun()
-
-            else:
-                st.info("No tags yet. Create your first tag!")
+                else:
+                    st.info("No tags yet. Create your first tag!")
 
         # --- Right Column: Create Tag ---
         with tag_col2:
