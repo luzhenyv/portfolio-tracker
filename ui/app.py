@@ -1936,6 +1936,53 @@ def _render_note_card(note, show_target: bool = False):
                     st.rerun()
 
 
+@st.dialog("Edit Tags")
+def edit_asset_tags_dialog(asset, current_tags: list, all_tag_names: list):
+    """Dialog for editing tags on an asset."""
+    st.markdown(f"**Edit tags for {asset.ticker}**")
+
+    current_tag_names = [tag.name for tag in current_tags]
+
+    if all_tag_names:
+        selected_tags = st.multiselect(
+            "Select existing tags",
+            options=all_tag_names,
+            default=[t for t in current_tag_names if t in all_tag_names],
+            key=f"dialog_select_tags_{asset.id}",
+        )
+    else:
+        selected_tags = []
+        st.caption("No existing tags")
+
+    new_tags_input = st.text_input(
+        "Add new tags (comma-separated)",
+        placeholder="AI, Semiconductor, Cloud",
+        key=f"dialog_new_tags_input_{asset.id}",
+    )
+
+    col1, col2 = st.columns(2)
+
+    if col1.button("Save Tags", type="primary", key=f"dialog_save_{asset.id}"):
+        all_tags = selected_tags.copy()
+        if new_tags_input.strip():
+            new_tags_list = [
+                t.strip() for t in new_tags_input.split(",") if t.strip()
+            ]
+            all_tags.extend(new_tags_list)
+        all_tags = list(set(all_tags))
+
+        result = set_asset_tags_by_names(asset.id, all_tags)
+        if result.success:
+            st.success(result.message)
+            time.sleep(1)
+            st.rerun()
+        else:
+            st.error(result.message)
+
+    if col2.button("Cancel", key=f"dialog_cancel_{asset.id}"):
+        st.rerun()
+
+
 def render_assets_tags_page():
     """
     Render Assets & Tags management page.
@@ -2061,65 +2108,12 @@ def render_assets_tags_page():
                             btn_col1, btn_col2 = st.columns(2)
                             with btn_col1:
                                 if st.button("🏷️", key=f"edit_tags_{asset.id}", help="Edit tags"):
-                                    st.session_state[f"editing_asset_tags_{asset.id}"] = True
-                                    st.rerun()
+                                    edit_asset_tags_dialog(asset, current_tags, all_tag_names)
                             with btn_col2:
                                 if st.button(
                                     "🗑️", key=f"delete_asset_{asset.id}", help="Delete asset"
                                 ):
                                     st.session_state[f"deleting_asset_{asset.id}"] = True
-                                    st.rerun()
-
-                        # --- Inline Tag Editor ---
-                        if st.session_state.get(f"editing_asset_tags_{asset.id}", False):
-                            with st.form(f"edit_tags_form_{asset.id}"):
-                                st.markdown(f"**Edit tags for {asset.ticker}**")
-
-                                current_tag_names = [tag.name for tag in current_tags]
-
-                                if all_tag_names:
-                                    selected_tags = st.multiselect(
-                                        "Select existing tags",
-                                        options=all_tag_names,
-                                        default=[
-                                            t for t in current_tag_names if t in all_tag_names
-                                        ],
-                                        key=f"select_tags_{asset.id}",
-                                    )
-                                else:
-                                    selected_tags = []
-                                    st.caption("No existing tags")
-
-                                new_tags_input = st.text_input(
-                                    "Add new tags (comma-separated)",
-                                    placeholder="AI, Semiconductor, Cloud",
-                                    key=f"new_tags_input_{asset.id}",
-                                )
-
-                                form_col1, form_col2 = st.columns(2)
-
-                                if form_col1.form_submit_button("Save Tags", type="primary"):
-                                    all_tags = selected_tags.copy()
-                                    if new_tags_input.strip():
-                                        new_tags_list = [
-                                            t.strip()
-                                            for t in new_tags_input.split(",")
-                                            if t.strip()
-                                        ]
-                                        all_tags.extend(new_tags_list)
-                                    all_tags = list(set(all_tags))
-
-                                    result = set_asset_tags_by_names(asset.id, all_tags)
-                                    if result.success:
-                                        st.success(result.message)
-                                        del st.session_state[f"editing_asset_tags_{asset.id}"]
-                                        time.sleep(1)
-                                        st.rerun()
-                                    else:
-                                        st.error(result.message)
-
-                                if form_col2.form_submit_button("Cancel"):
-                                    del st.session_state[f"editing_asset_tags_{asset.id}"]
                                     st.rerun()
 
                         # --- Delete Confirmation ---
