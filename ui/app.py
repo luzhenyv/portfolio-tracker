@@ -2079,119 +2079,120 @@ def render_assets_tags_page():
         st.markdown(f"**{len(assets_list)} Assets**")
 
         # --- Asset List with Tag Editing ---
-        if assets_list:
-            for asset in assets_list:
-                with st.container(border=True):
-                    col_info, col_tags, col_actions = st.columns([2, 4, 1])
+        with st.container(height=400):
+            if assets_list:
+                for asset in assets_list:
+                    with st.container(border=True):
+                        col_info, col_tags, col_actions = st.columns([2, 4, 1])
 
-                    with col_info:
-                        st.markdown(f"**{asset.ticker}**")
-                        status_badge = "🟢" if asset.status == AssetStatus.OWNED else "👁️"
-                        st.caption(f"{status_badge} {asset.status.value} · {asset.asset_type.value}")
-                        if asset.name:
-                            st.caption(asset.name[:35] + "..." if len(asset.name or "") > 35 else asset.name)
+                        with col_info:
+                            st.markdown(f"**{asset.ticker}**")
+                            status_badge = "🟢" if asset.status == AssetStatus.OWNED else "👁️"
+                            st.caption(f"{status_badge} {asset.status.value} · {asset.asset_type.value}")
+                            if asset.name:
+                                st.caption(asset.name[:35] + "..." if len(asset.name or "") > 35 else asset.name)
 
-                    with col_tags:
-                        current_tags = get_tags_for_ticker(asset.ticker)
-                        if current_tags:
-                            tag_pills = " ".join([f"`{tag.name}`" for tag in current_tags])
-                            st.markdown(f"Tags: {tag_pills}")
-                        else:
-                            st.caption("_No tags_")
-
-                    with col_actions:
-                        btn_col1, btn_col2 = st.columns(2)
-                        with btn_col1:
-                            if st.button("🏷️", key=f"edit_tags_{asset.id}", help="Edit tags"):
-                                st.session_state[f"editing_asset_tags_{asset.id}"] = True
-                                st.rerun()
-                        with btn_col2:
-                            if st.button("🗑️", key=f"delete_asset_{asset.id}", help="Delete asset"):
-                                st.session_state[f"deleting_asset_{asset.id}"] = True
-                                st.rerun()
-
-                    # --- Inline Tag Editor ---
-                    if st.session_state.get(f"editing_asset_tags_{asset.id}", False):
-                        with st.form(f"edit_tags_form_{asset.id}"):
-                            st.markdown(f"**Edit tags for {asset.ticker}**")
-
-                            current_tag_names = [tag.name for tag in current_tags]
-
-                            if all_tag_names:
-                                selected_tags = st.multiselect(
-                                    "Select existing tags",
-                                    options=all_tag_names,
-                                    default=[t for t in current_tag_names if t in all_tag_names],
-                                    key=f"select_tags_{asset.id}",
-                                )
+                        with col_tags:
+                            current_tags = get_tags_for_ticker(asset.ticker)
+                            if current_tags:
+                                tag_pills = " ".join([f"`{tag.name}`" for tag in current_tags])
+                                st.markdown(f"Tags: {tag_pills}")
                             else:
-                                selected_tags = []
-                                st.caption("No existing tags")
+                                st.caption("_No tags_")
 
-                            new_tags_input = st.text_input(
-                                "Add new tags (comma-separated)",
-                                placeholder="AI, Semiconductor, Cloud",
-                                key=f"new_tags_input_{asset.id}",
+                        with col_actions:
+                            btn_col1, btn_col2 = st.columns(2)
+                            with btn_col1:
+                                if st.button("🏷️", key=f"edit_tags_{asset.id}", help="Edit tags"):
+                                    st.session_state[f"editing_asset_tags_{asset.id}"] = True
+                                    st.rerun()
+                            with btn_col2:
+                                if st.button("🗑️", key=f"delete_asset_{asset.id}", help="Delete asset"):
+                                    st.session_state[f"deleting_asset_{asset.id}"] = True
+                                    st.rerun()
+
+                        # --- Inline Tag Editor ---
+                        if st.session_state.get(f"editing_asset_tags_{asset.id}", False):
+                            with st.form(f"edit_tags_form_{asset.id}"):
+                                st.markdown(f"**Edit tags for {asset.ticker}**")
+
+                                current_tag_names = [tag.name for tag in current_tags]
+
+                                if all_tag_names:
+                                    selected_tags = st.multiselect(
+                                        "Select existing tags",
+                                        options=all_tag_names,
+                                        default=[t for t in current_tag_names if t in all_tag_names],
+                                        key=f"select_tags_{asset.id}",
+                                    )
+                                else:
+                                    selected_tags = []
+                                    st.caption("No existing tags")
+
+                                new_tags_input = st.text_input(
+                                    "Add new tags (comma-separated)",
+                                    placeholder="AI, Semiconductor, Cloud",
+                                    key=f"new_tags_input_{asset.id}",
+                                )
+
+                                form_col1, form_col2 = st.columns(2)
+
+                                if form_col1.form_submit_button("Save Tags", type="primary"):
+                                    all_tags = selected_tags.copy()
+                                    if new_tags_input.strip():
+                                        new_tags_list = [t.strip() for t in new_tags_input.split(",") if t.strip()]
+                                        all_tags.extend(new_tags_list)
+                                    all_tags = list(set(all_tags))
+
+                                    result = set_asset_tags_by_names(asset.id, all_tags)
+                                    if result.success:
+                                        st.success(result.message)
+                                        del st.session_state[f"editing_asset_tags_{asset.id}"]
+                                        time.sleep(1)
+                                        st.rerun()
+                                    else:
+                                        st.error(result.message)
+
+                                if form_col2.form_submit_button("Cancel"):
+                                    del st.session_state[f"editing_asset_tags_{asset.id}"]
+                                    st.rerun()
+
+                        # --- Delete Confirmation ---
+                        if st.session_state.get(f"deleting_asset_{asset.id}", False):
+                            st.warning(
+                                f"⚠️ **Delete {asset.ticker}?**\n\n"
+                                "This will remove the asset and all related data (prices, fundamentals, valuations, notes)."
                             )
 
-                            form_col1, form_col2 = st.columns(2)
+                            if asset.status == AssetStatus.OWNED:
+                                st.error("⚠️ This asset is OWNED. Deletion will be blocked if it has positions or trades.")
 
-                            if form_col1.form_submit_button("Save Tags", type="primary"):
-                                all_tags = selected_tags.copy()
-                                if new_tags_input.strip():
-                                    new_tags_list = [t.strip() for t in new_tags_input.split(",") if t.strip()]
-                                    all_tags.extend(new_tags_list)
-                                all_tags = list(set(all_tags))
+                            del_col1, del_col2 = st.columns(2)
 
-                                result = set_asset_tags_by_names(asset.id, all_tags)
-                                if result.success:
-                                    st.success(result.message)
-                                    del st.session_state[f"editing_asset_tags_{asset.id}"]
+                            if del_col1.button("🗑️ Confirm Delete", key=f"confirm_del_{asset.id}", type="primary"):
+                                result = delete_assets(
+                                    tickers=[asset.ticker],
+                                    allow_owned=True,
+                                    allow_with_trades=False,
+                                    allow_with_active_position=False,
+                                )
+
+                                if result.deleted:
+                                    st.success(f"✅ Deleted {asset.ticker}")
+                                    del st.session_state[f"deleting_asset_{asset.id}"]
                                     time.sleep(1)
                                     st.rerun()
+                                elif result.blocked:
+                                    st.error(f"❌ Blocked: {result.blocked[0]['reason']}")
                                 else:
-                                    st.error(result.message)
+                                    st.error("❌ Delete failed")
 
-                            if form_col2.form_submit_button("Cancel"):
-                                del st.session_state[f"editing_asset_tags_{asset.id}"]
-                                st.rerun()
-
-                    # --- Delete Confirmation ---
-                    if st.session_state.get(f"deleting_asset_{asset.id}", False):
-                        st.warning(
-                            f"⚠️ **Delete {asset.ticker}?**\n\n"
-                            "This will remove the asset and all related data (prices, fundamentals, valuations, notes)."
-                        )
-
-                        if asset.status == AssetStatus.OWNED:
-                            st.error("⚠️ This asset is OWNED. Deletion will be blocked if it has positions or trades.")
-
-                        del_col1, del_col2 = st.columns(2)
-
-                        if del_col1.button("🗑️ Confirm Delete", key=f"confirm_del_{asset.id}", type="primary"):
-                            result = delete_assets(
-                                tickers=[asset.ticker],
-                                allow_owned=True,
-                                allow_with_trades=False,
-                                allow_with_active_position=False,
-                            )
-
-                            if result.deleted:
-                                st.success(f"✅ Deleted {asset.ticker}")
+                            if del_col2.button("Cancel", key=f"cancel_del_{asset.id}"):
                                 del st.session_state[f"deleting_asset_{asset.id}"]
-                                time.sleep(1)
                                 st.rerun()
-                            elif result.blocked:
-                                st.error(f"❌ Blocked: {result.blocked[0]['reason']}")
-                            else:
-                                st.error("❌ Delete failed")
 
-                        if del_col2.button("Cancel", key=f"cancel_del_{asset.id}"):
-                            del st.session_state[f"deleting_asset_{asset.id}"]
-                            st.rerun()
-
-        else:
-            st.info("No assets match the current filters.")
+            else:
+                st.info("No assets match the current filters.")
 
         st.divider()
 
