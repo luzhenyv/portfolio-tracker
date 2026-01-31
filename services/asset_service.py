@@ -315,14 +315,20 @@ class DeleteResult:
         return len(self.deleted) + len(self.blocked) + len(self.not_found) + len(self.errors)
 
 
-def delete_watchlist_assets(tickers: list[str]) -> DeleteResult:
+def delete_assets(
+    tickers: list[str],
+    allow_owned: bool = False,
+    allow_with_trades: bool = False,
+    allow_with_active_position: bool = False,
+) -> DeleteResult:
     """
-    Delete one or more watchlist assets and all their related data.
+    Delete one or more assets and all their related data with configurable safety checks.
     
-    This function safely deletes WATCHLIST assets, blocking deletion of:
-    - OWNED assets (must sell positions first)
-    - Assets with active positions (non-zero shares)
-    - Assets with trade history (safety check)
+    By default (all 'allow_*' parameters False), this function safely deletes WATCHLIST 
+    assets, blocking deletion of:
+    - OWNED assets (unless allow_owned=True)
+    - Assets with active positions (unless allow_with_active_position=True)
+    - Assets with trade history (unless allow_with_trades=True)
     
     The deletion cascades to remove all related data:
     - prices_daily
@@ -331,11 +337,15 @@ def delete_watchlist_assets(tickers: list[str]) -> DeleteResult:
     - valuation_metric_overrides
     - watchlist_targets
     - investment_thesis
-    - trades (if any, but blocked for safety)
-    - positions (if any, but blocked for safety)
+    - trades (cascades if allowed)
+    - positions (cascades if allowed)
     
     Args:
         tickers: List of ticker symbols to delete
+        allow_owned: If True, allows deleting assets with AssetStatus.OWNED 
+            (useful for closed positions that were never moved back to watchlist)
+        allow_with_trades: If True, allows deleting assets even if they have historical trade records
+        allow_with_active_position: If True, allows deleting assets even if they have current holdings
         
     Returns:
         DeleteResult with deleted, blocked, not_found, and errors lists
@@ -366,27 +376,27 @@ def delete_watchlist_assets(tickers: list[str]) -> DeleteResult:
             
             asset = found_tickers[ticker_upper]
             
-            # Block deletion of OWNED assets
-            if asset.status == AssetStatus.OWNED:
+            # Block deletion of OWNED assets unless explicitly allowed
+            if asset.status == AssetStatus.OWNED and not allow_owned:
                 blocked.append({
                     "ticker": ticker_upper,
-                    "reason": "Asset is OWNED (sell all positions first)"
+                    "reason": "Asset is OWNED (set allow_owned=True to delete)"
                 })
                 continue
             
-            # Block if asset has active position
-            if asset_repo.has_position(asset.id):
+            # Block if asset has active position (non-zero shares) unless explicitly allowed
+            if asset_repo.has_position(asset.id) and not allow_with_active_position:
                 blocked.append({
                     "ticker": ticker_upper,
-                    "reason": "Asset has active position"
+                    "reason": "Asset has active position (set allow_with_active_position=True to delete)"
                 })
                 continue
             
-            # Block if asset has trade history (extra safety)
-            if asset_repo.has_trades(asset.id):
+            # Block if asset has trade history (extra safety) unless explicitly allowed
+            if asset_repo.has_trades(asset.id) and not allow_with_trades:
                 blocked.append({
                     "ticker": ticker_upper,
-                    "reason": "Asset has trade history"
+                    "reason": "Asset has trade history (set allow_with_trades=True to delete)"
                 })
                 continue
             
@@ -394,7 +404,7 @@ def delete_watchlist_assets(tickers: list[str]) -> DeleteResult:
             try:
                 if asset_repo.delete_asset(asset.id):
                     deleted.append(ticker_upper)
-                    logger.info(f"Deleted watchlist asset: {ticker_upper}")
+                    logger.info(f"Deleted asset: {ticker_upper} (allow_owned={allow_owned}, trades={allow_with_trades})")
                 else:
                     errors.append({
                         "ticker": ticker_upper,
@@ -411,5 +421,3 @@ def delete_watchlist_assets(tickers: list[str]) -> DeleteResult:
         session.commit()
     
     return DeleteResult(deleted=deleted, blocked=blocked, not_found=not_found, errors=errors)
-
-
