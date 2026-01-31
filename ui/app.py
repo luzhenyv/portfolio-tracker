@@ -1936,6 +1936,35 @@ def _render_note_card(note, show_target: bool = False):
                     st.rerun()
 
 
+@st.dialog("Rename Tag")
+def rename_tag_dialog(tag):
+    """Dialog for renaming a tag."""
+    st.markdown(f"**Rename tag: {tag.name}**")
+
+    new_name = st.text_input(
+        "New Name",
+        value=tag.name,
+        key=f"dialog_rename_input_{tag.id}",
+    )
+
+    col1, col2 = st.columns(2)
+
+    if col1.button("Save", type="primary", key=f"dialog_rename_save_{tag.id}"):
+        if new_name.strip() and new_name.strip() != tag.name:
+            result = rename_tag(tag.id, new_name.strip())
+            if result.success:
+                st.success(result.message)
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error(result.message)
+        else:
+            st.rerun()
+
+    if col2.button("Cancel", key=f"dialog_rename_cancel_{tag.id}"):
+        st.rerun()
+
+
 @st.dialog("Edit Tags")
 def edit_asset_tags_dialog(asset, current_tags: list, all_tag_names: list):
     """Dialog for editing tags on an asset."""
@@ -2279,39 +2308,11 @@ def render_assets_tags_page():
 
                                 with act_col1:
                                     if st.button("✏️", key=f"edit_tag_{tag.id}", help="Rename tag"):
-                                        st.session_state[f"editing_tag_{tag.id}"] = True
-                                        st.rerun()
+                                        rename_tag_dialog(tag)
 
                                 with act_col2:
                                     if st.button("🗑️", key=f"delete_tag_{tag.id}", help="Delete tag"):
                                         st.session_state[f"deleting_tag_{tag.id}"] = True
-                                        st.rerun()
-
-                            # --- Rename Form ---
-                            if st.session_state.get(f"editing_tag_{tag.id}", False):
-                                with st.form(f"rename_tag_form_{tag.id}"):
-                                    new_name = st.text_input(
-                                        "New Name", value=tag.name, key=f"rename_input_{tag.id}"
-                                    )
-
-                                    rename_col1, rename_col2 = st.columns(2)
-
-                                    if rename_col1.form_submit_button("Save", type="primary"):
-                                        if new_name.strip() and new_name.strip() != tag.name:
-                                            result = rename_tag(tag.id, new_name.strip())
-                                            if result.success:
-                                                st.success(result.message)
-                                                del st.session_state[f"editing_tag_{tag.id}"]
-                                                time.sleep(1)
-                                                st.rerun()
-                                            else:
-                                                st.error(result.message)
-                                        else:
-                                            del st.session_state[f"editing_tag_{tag.id}"]
-                                            st.rerun()
-
-                                    if rename_col2.form_submit_button("Cancel"):
-                                        del st.session_state[f"editing_tag_{tag.id}"]
                                         st.rerun()
 
                             # --- Delete Confirmation ---
