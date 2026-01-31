@@ -16,6 +16,7 @@ from typing import Optional
 
 from sqlalchemy import (
     CheckConstraint,
+    Column,
     DateTime,
     Enum as SQLEnum,
     Float,
@@ -24,6 +25,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Table,
     Text,
     UniqueConstraint,
 )
@@ -33,6 +35,44 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
     pass
+
+
+# Association table for Asset <-> Tag many-to-many relationship
+asset_tags = Table(
+    "asset_tags",
+    Base.metadata,
+    Column("asset_id", Integer, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
+    Index("idx_asset_tags_tag", "tag_id"),  # For "find assets by tag" queries
+)
+
+
+class Tag(Base):
+    """
+    Tag entity for categorizing assets.
+    
+    Supports many-to-many relationship with Asset.
+    Examples: "AI", "FSD", "Magnificent Seven", "Semiconductor"
+    
+    Tag names are case-insensitive unique (enforced at service layer).
+    Hard delete cascades to asset_tags join table.
+    """
+    __tablename__ = "tags"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now(timezone.utc), nullable=False
+    )
+
+    # Relationships
+    assets: Mapped[list["Asset"]] = relationship(
+        "Asset", secondary=asset_tags, back_populates="tags"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Tag(id={self.id}, name={self.name!r})>"
 
 
 class AssetStatus(str, Enum):
@@ -115,6 +155,9 @@ class Asset(Base):
     )
     thesis: Mapped[Optional["InvestmentThesis"]] = relationship(
         "InvestmentThesis", back_populates="asset", uselist=False, cascade="all, delete-orphan"
+    )
+    tags: Mapped[list["Tag"]] = relationship(
+        "Tag", secondary=asset_tags, back_populates="assets"
     )
 
     def __repr__(self) -> str:
