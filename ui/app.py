@@ -873,25 +873,48 @@ def render_admin_page():
                     if not new_ticker:
                         st.error("❌ Ticker symbol is required")
                     else:
-                        with st.spinner(f"Adding {new_ticker}..."):
-                            status = (
-                                AssetStatus.OWNED
-                                if asset_status == "OWNED"
-                                else AssetStatus.WATCHLIST
-                            )
-                            result = create_asset_with_data(
-                                new_ticker, status, asset_type=AssetType(asset_type)
-                            )
+                        # Validate ticker exists in yfinance before creating asset
+                        with st.spinner(f"Validating {new_ticker}..."):
+                            import yfinance as yf
+                            try:
+                                ticker_obj = yf.Ticker(new_ticker)
+                                info = ticker_obj.info
+                                
+                                # Check if ticker has valid data
+                                # yfinance returns info with limited data for invalid tickers
+                                if not info or len(info) <= 5 or info.get("regularMarketPrice") is None:
+                                    st.error(
+                                        f"❌ **Ticker '{new_ticker}' not found**\n\n"
+                                        f"The ticker symbol '{new_ticker}' does not exist in Yahoo Finance or has no price data.\n\n"
+                                        f"Please verify the ticker symbol and try again."
+                                    )
+                                else:
+                                    # Ticker is valid, proceed with asset creation
+                                    with st.spinner(f"Adding {new_ticker}..."):
+                                        status = (
+                                            AssetStatus.OWNED
+                                            if asset_status == "OWNED"
+                                            else AssetStatus.WATCHLIST
+                                        )
+                                        result = create_asset_with_data(
+                                            new_ticker, status, asset_type=AssetType(asset_type)
+                                        )
 
-                        if result.success:
-                            st.success(
-                                f"✅ Added {new_ticker}\n\n"
-                                f"Prices fetched: {result.prices_fetched}\n\n"
-                                f"{result.status_message}"
-                            )
-                            celebrate_and_rerun()
-                        else:
-                            st.error(f"❌ Failed: {', '.join(result.errors)}")
+                                    if result.success:
+                                        st.success(
+                                            f"✅ Added {new_ticker}\n\n"
+                                            f"Prices fetched: {result.prices_fetched}\n\n"
+                                            f"{result.status_message}"
+                                        )
+                                        celebrate_and_rerun()
+                                    else:
+                                        st.error(f"❌ Failed: {', '.join(result.errors)}")
+                            except Exception as e:
+                                st.error(
+                                    f"❌ **Unable to validate ticker '{new_ticker}'**\n\n"
+                                    f"Error: {str(e)}\n\n"
+                                    f"Please check your internet connection and verify the ticker symbol."
+                                )
 
     # --- CASH OPERATIONS ---
     with cash_col:
