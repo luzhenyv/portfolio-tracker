@@ -1274,10 +1274,29 @@ def render_watchlist_page():
     - Yahoo-aligned Financial Highlights table (read-only)
     - BUY/WAIT/AVOID signals
     - Multi-row selection for bulk delete
+    - Tag filtering with pills
     """
     from services.asset_service import delete_assets
 
     st.header("👀 Watchlist & Valuation")
+
+    # Get all tags for filtering
+    tag_result = get_all_tags_with_counts()
+    all_tag_names = [t.tag.name for t in tag_result.tags] if tag_result.tags else []
+
+    # Tag filter using pills
+    if all_tag_names:
+        st.caption("🏷️ Filter by Tags:")
+        selected_tags = st.pills(
+            "Tag Filter",
+            options=all_tag_names,
+            selection_mode="multi",
+            default=None,
+            label_visibility="collapsed",
+        )
+        st.divider()
+    else:
+        selected_tags = []
 
     try:
         valuation_df = run_valuation()
@@ -1289,6 +1308,16 @@ def render_watchlist_page():
         st.info("No valuation data available.")
         st.caption("Run the valuation fetcher to populate this view.")
         return
+
+    # Filter by selected tags if any
+    if selected_tags:
+        filtered_assets = get_assets_by_tag_names(selected_tags)
+        filtered_tickers = {asset.ticker for asset in filtered_assets}
+        valuation_df = valuation_df[valuation_df["ticker"].isin(filtered_tickers)]
+        
+        if valuation_df.empty:
+            st.info(f"No assets found with selected tags: {', '.join(selected_tags)}")
+            return
 
     # Show "As of" date from the most recent updated_at
     if "updated_at" in valuation_df.columns:
