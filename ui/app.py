@@ -267,7 +267,7 @@ def render_overview_page():
                 margin=dict(t=30, b=20, l=20, r=20),
                 height=300,
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
         with col_pie2:
             type_df = alloc_df.groupby("Type")["Value"].sum().reset_index()
@@ -495,7 +495,7 @@ def render_overview_page():
                     st.rerun()
 
             with chart_col:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig)
         else:
             st.info("No NAV history available. Add trades or cash transactions to see chart.")
     except Exception as e:
@@ -852,7 +852,7 @@ def _render_efficient_frontier_section(portfolio_df: pd.DataFrame, summary: dict
         height=500,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)
 
     # Portfolio comparison metrics
     col1, col2, col3 = st.columns(3)
