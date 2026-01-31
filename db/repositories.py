@@ -17,6 +17,8 @@ from db.models import (
     AssetType,
     CashTransaction,
     CashTransactionType,
+    IndexPriceDaily,
+    MarketIndex,
     Note,
     NoteTarget,
     NoteTargetKind,
@@ -32,46 +34,42 @@ from db.models import (
 
 class AssetRepository:
     """Repository for Asset-related operations."""
-    
+
     def __init__(self, session: Session):
         self.session = session
-    
+
     def get_by_id(self, asset_id: int) -> Asset | None:
         """Get asset by ID."""
         return self.session.get(Asset, asset_id)
-    
+
     def get_by_ticker(self, ticker: str) -> Asset | None:
         """Get asset by ticker symbol."""
         stmt = select(Asset).where(Asset.ticker == ticker.upper())
         return self.session.scalar(stmt)
-    
+
     def get_all(self) -> Sequence[Asset]:
         """Get all assets."""
         stmt = select(Asset).order_by(Asset.ticker)
         return self.session.scalars(stmt).all()
-    
+
     def get_by_status(self, status: AssetStatus) -> Sequence[Asset]:
         """Get assets filtered by status."""
         stmt = select(Asset).where(Asset.status == status).order_by(Asset.ticker)
         return self.session.scalars(stmt).all()
-    
+
     def get_owned_assets(self) -> Sequence[Asset]:
         """Get all owned assets (convenience method)."""
         return self.get_by_status(AssetStatus.OWNED)
-    
+
     def get_watchlist_assets(self) -> Sequence[Asset]:
         """Get all watchlist assets (convenience method)."""
         return self.get_by_status(AssetStatus.WATCHLIST)
-    
+
     def get_with_position(self, asset_id: int) -> Asset | None:
         """Get asset with position state eagerly loaded."""
-        stmt = (
-            select(Asset)
-            .options(joinedload(Asset.position))
-            .where(Asset.id == asset_id)
-        )
+        stmt = select(Asset).options(joinedload(Asset.position)).where(Asset.id == asset_id)
         return self.session.scalar(stmt)
-    
+
     def create(
         self,
         ticker: str,
@@ -95,7 +93,7 @@ class AssetRepository:
         self.session.add(asset)
         self.session.flush()  # Get the ID
         return asset
-    
+
     def get_or_create(
         self,
         ticker: str,
@@ -104,7 +102,7 @@ class AssetRepository:
     ) -> tuple[Asset, bool]:
         """
         Get existing asset or create new one.
-        
+
         Returns:
             Tuple of (asset, created) where created is True if new.
         """
@@ -112,7 +110,7 @@ class AssetRepository:
         if asset:
             return asset, False
         return self.create(ticker=ticker, status=status, **kwargs), True
-    
+
     def update_status(self, asset_id: int, status: AssetStatus) -> Asset | None:
         """Update asset status."""
         asset = self.get_by_id(asset_id)
@@ -129,10 +127,10 @@ class AssetRepository:
         stmt = select(Asset).where(Asset.ticker.in_(upper_tickers))
         return self.session.scalars(stmt).all()
 
-    def delete_asset(self, asset_id: int) -> bool:
+    def delete_by_id(self, asset_id: int) -> bool:
         """
         Delete an asset and all related data.
-        
+
         Relies on ON DELETE CASCADE for:
         - prices_daily
         - fundamentals_quarterly
@@ -143,14 +141,14 @@ class AssetRepository:
         - trades
         - positions
         - note_targets (and cascaded notes)
-        
+
         Returns:
             True if deleted, False if asset not found.
         """
         asset = self.get_by_id(asset_id)
         if not asset:
             return False
-        
+
         self.session.delete(asset)
         self.session.flush()
         return True
@@ -163,42 +161,34 @@ class AssetRepository:
 
     def has_position(self, asset_id: int) -> bool:
         """Check if an asset has an active position (non-zero shares)."""
-        stmt = (
-            select(Position)
-            .where(
-                Position.asset_id == asset_id,
-                (Position.long_shares > 0) | (Position.short_shares > 0)
-            )
+        stmt = select(Position).where(
+            Position.asset_id == asset_id, (Position.long_shares > 0) | (Position.short_shares > 0)
         )
         return self.session.scalar(stmt) is not None
 
 
 class PriceRepository:
     """Repository for price data operations."""
-    
+
     def __init__(self, session: Session):
         self.session = session
-    
+
     def get_latest_date(self, asset_id: int) -> str | None:
         """Get the most recent price date for an asset."""
-        stmt = (
-            select(func.max(PriceDaily.date))
-            .where(PriceDaily.asset_id == asset_id)
-        )
+        stmt = select(func.max(PriceDaily.date)).where(PriceDaily.asset_id == asset_id)
         return self.session.scalar(stmt)
-    
+
     def get_latest_price(self, asset_id: int) -> PriceDaily | None:
         """Get the most recent price record for an asset."""
         latest_date = self.get_latest_date(asset_id)
         if not latest_date:
             return None
-        
-        stmt = (
-            select(PriceDaily)
-            .where(PriceDaily.asset_id == asset_id, PriceDaily.date == latest_date)
+
+        stmt = select(PriceDaily).where(
+            PriceDaily.asset_id == asset_id, PriceDaily.date == latest_date
         )
         return self.session.scalar(stmt)
-    
+
     def get_price_history(
         self,
         asset_id: int,
@@ -207,52 +197,44 @@ class PriceRepository:
     ) -> Sequence[PriceDaily]:
         """Get price history for an asset within date range."""
         stmt = select(PriceDaily).where(PriceDaily.asset_id == asset_id)
-        
+
         if start_date:
             stmt = stmt.where(PriceDaily.date >= start_date)
         if end_date:
             stmt = stmt.where(PriceDaily.date <= end_date)
-        
+
         stmt = stmt.order_by(PriceDaily.date)
         return self.session.scalars(stmt).all()
-    
+
     def get_latest_prices_for_assets(
         self,
         asset_ids: list[int] | None = None,
     ) -> dict[int, PriceDaily]:
         """
         Get latest price for multiple assets.
-        
+
         Returns:
             Dict mapping asset_id to latest PriceDaily.
         """
         # Subquery to get max date per asset
-        subq = (
-            select(
-                PriceDaily.asset_id,
-                func.max(PriceDaily.date).label("max_date"),
-            )
-            .group_by(PriceDaily.asset_id)
-        )
-        
+        subq = select(
+            PriceDaily.asset_id,
+            func.max(PriceDaily.date).label("max_date"),
+        ).group_by(PriceDaily.asset_id)
+
         if asset_ids:
             subq = subq.where(PriceDaily.asset_id.in_(asset_ids))
-        
+
         subq = subq.subquery()
-        
+
         # Main query joining with subquery
-        stmt = (
-            select(PriceDaily)
-            .join(
-                subq,
-                (PriceDaily.asset_id == subq.c.asset_id) &
-                (PriceDaily.date == subq.c.max_date)
-            )
+        stmt = select(PriceDaily).join(
+            subq, (PriceDaily.asset_id == subq.c.asset_id) & (PriceDaily.date == subq.c.max_date)
         )
-        
+
         prices = self.session.scalars(stmt).all()
         return {p.asset_id: p for p in prices}
-    
+
     def bulk_upsert_prices(
         self,
         asset_id: int,
@@ -260,11 +242,11 @@ class PriceRepository:
     ) -> int:
         """
         Bulk insert/update price records (idempotent).
-        
+
         Args:
             asset_id: Asset ID for the prices.
             price_records: List of dicts with date, open, high, low, close, etc.
-            
+
         Returns:
             Number of records inserted.
         """
@@ -276,7 +258,7 @@ class PriceRepository:
                 PriceDaily.date == record["date"],
             )
             existing = self.session.scalar(stmt)
-            
+
             if not existing:
                 price = PriceDaily(
                     asset_id=asset_id,
@@ -290,7 +272,7 @@ class PriceRepository:
                 )
                 self.session.add(price)
                 count += 1
-        
+
         self.session.flush()
         return count
 
@@ -359,10 +341,11 @@ class PriceRepository:
 
         # Use window function to rank dates per asset
         # ROW_NUMBER() OVER (PARTITION BY asset_id ORDER BY date DESC)
-        row_num = func.row_number().over(
-            partition_by=PriceDaily.asset_id,
-            order_by=PriceDaily.date.desc()
-        ).label("rn")
+        row_num = (
+            func.row_number()
+            .over(partition_by=PriceDaily.asset_id, order_by=PriceDaily.date.desc())
+            .label("rn")
+        )
 
         subq = select(
             PriceDaily.asset_id,
@@ -412,22 +395,19 @@ class PriceRepository:
 
 class ValuationRepository:
     """Repository for valuation metrics operations."""
-    
+
     def __init__(self, session: Session):
         self.session = session
-    
+
     def get_by_asset_id(self, asset_id: int) -> ValuationMetric | None:
         """Get valuation metrics for an asset."""
         return self.session.get(ValuationMetric, asset_id)
-    
+
     def get_all_with_assets(self) -> Sequence[ValuationMetric]:
         """Get all valuation metrics with asset data."""
-        stmt = (
-            select(ValuationMetric)
-            .options(joinedload(ValuationMetric.asset))
-        )
+        stmt = select(ValuationMetric).options(joinedload(ValuationMetric.asset))
         return self.session.scalars(stmt).all()
-    
+
     def get_for_watchlist(self) -> Sequence[ValuationMetric]:
         """Get valuation metrics for watchlist assets only."""
         stmt = (
@@ -437,7 +417,7 @@ class ValuationRepository:
             .options(joinedload(ValuationMetric.asset))
         )
         return self.session.scalars(stmt).all()
-    
+
     def upsert(
         self,
         asset_id: int,
@@ -469,12 +449,12 @@ class ValuationRepository:
     ) -> ValuationMetric:
         """
         Insert or update valuation metrics (FR-8, FR-9).
-        
+
         Yahoo-aligned fields matching "Statistics" page.
         Missing values are stored as NULL, no synthetic values allowed.
         """
         existing = self.get_by_asset_id(asset_id)
-        
+
         if existing:
             # Valuation Measures
             existing.market_cap = market_cap
@@ -504,7 +484,7 @@ class ValuationRepository:
             existing.updated_at = datetime.utcnow()
             self.session.flush()
             return existing
-        
+
         valuation = ValuationMetric(
             asset_id=asset_id,
             market_cap=market_cap,
@@ -535,36 +515,35 @@ class ValuationRepository:
 
 class ValuationOverrideRepository:
     """Repository for valuation metric override operations."""
-    
+
     def __init__(self, session: Session):
         self.session = session
-    
+
     def get_by_asset_id(self, asset_id: int) -> ValuationMetricOverride | None:
         """Get override for a single asset."""
         return self.session.get(ValuationMetricOverride, asset_id)
-    
+
     def get_by_asset_ids(self, asset_ids: list[int]) -> dict[int, ValuationMetricOverride]:
         """
         Get overrides for multiple assets.
-        
+
         Returns:
             Dict mapping asset_id to ValuationMetricOverride.
         """
         if not asset_ids:
             return {}
-        
-        stmt = (
-            select(ValuationMetricOverride)
-            .where(ValuationMetricOverride.asset_id.in_(asset_ids))
+
+        stmt = select(ValuationMetricOverride).where(
+            ValuationMetricOverride.asset_id.in_(asset_ids)
         )
         overrides = self.session.scalars(stmt).all()
         return {o.asset_id: o for o in overrides}
-    
+
     def get_all(self) -> Sequence[ValuationMetricOverride]:
         """Get all overrides."""
         stmt = select(ValuationMetricOverride)
         return self.session.scalars(stmt).all()
-    
+
     def upsert(
         self,
         asset_id: int,
@@ -596,12 +575,12 @@ class ValuationOverrideRepository:
     ) -> ValuationMetricOverride:
         """
         Insert or update valuation metric overrides.
-        
+
         NULL values mean no override (use fetched value).
         Supports all Yahoo-aligned metrics.
         """
         existing = self.get_by_asset_id(asset_id)
-        
+
         if existing:
             # Valuation Measures overrides
             existing.market_cap_override = market_cap_override
@@ -631,7 +610,7 @@ class ValuationOverrideRepository:
             existing.updated_at = datetime.utcnow()
             self.session.flush()
             return existing
-        
+
         override = ValuationMetricOverride(
             asset_id=asset_id,
             market_cap_override=market_cap_override,
@@ -658,7 +637,7 @@ class ValuationOverrideRepository:
         self.session.add(override)
         self.session.flush()
         return override
-    
+
     def delete(self, asset_id: int) -> bool:
         """Delete override for an asset."""
         override = self.get_by_asset_id(asset_id)
@@ -671,10 +650,10 @@ class ValuationOverrideRepository:
 
 class TradeRepository:
     """Repository for trade operations."""
-    
+
     def __init__(self, session: Session):
         self.session = session
-    
+
     def create_trade(
         self,
         asset_id: int,
@@ -698,11 +677,11 @@ class TradeRepository:
         self.session.add(trade)
         self.session.flush()
         return trade
-    
+
     def get_by_id(self, trade_id: int) -> Trade | None:
         """Get trade by ID."""
         return self.session.get(Trade, trade_id)
-    
+
     def get_trades_for_asset(
         self,
         asset_id: int,
@@ -710,19 +689,16 @@ class TradeRepository:
         end_date: datetime | None = None,
     ) -> Sequence[Trade]:
         """Get trades for an asset within optional date range."""
-        stmt = (
-            select(Trade)
-            .where(Trade.asset_id == asset_id)
-        )
-        
+        stmt = select(Trade).where(Trade.asset_id == asset_id)
+
         if start_date:
             stmt = stmt.where(Trade.trade_at >= start_date)
         if end_date:
             stmt = stmt.where(Trade.trade_at <= end_date)
-        
+
         stmt = stmt.order_by(Trade.trade_at.desc(), Trade.id.desc())
         return self.session.scalars(stmt).all()
-    
+
     def get_latest_trade_for_asset(self, asset_id: int) -> Trade | None:
         """Get the most recent trade for an asset."""
         stmt = (
@@ -732,19 +708,19 @@ class TradeRepository:
             .limit(1)
         )
         return self.session.scalar(stmt)
-    
+
     def get_latest_trade_ids_by_ticker(self) -> dict[str, int]:
         """
         Get the latest trade ID for each ticker.
-        
+
         Used to determine which trades are editable (only latest per ticker).
-        
+
         Returns:
             Dict mapping ticker to latest trade_id
         """
         # Subquery to get max trade_at per asset
         from sqlalchemy import and_
-        
+
         subq = (
             select(
                 Trade.asset_id,
@@ -753,32 +729,26 @@ class TradeRepository:
             .group_by(Trade.asset_id)
             .subquery()
         )
-        
+
         # For each asset, get the trade with max date (and max id for ties)
         # This requires a second level of filtering
         stmt = (
             select(Trade.id, Asset.ticker)
             .join(Asset, Trade.asset_id == Asset.id)
-            .join(
-                subq,
-                and_(
-                    Trade.asset_id == subq.c.asset_id,
-                    Trade.trade_at == subq.c.max_date
-                )
-            )
+            .join(subq, and_(Trade.asset_id == subq.c.asset_id, Trade.trade_at == subq.c.max_date))
             .order_by(Trade.asset_id, Trade.id.desc())
         )
-        
+
         results = self.session.execute(stmt).all()
-        
+
         # Keep only the highest id per ticker (for same-datetime trades)
         latest_by_ticker: dict[str, int] = {}
         for trade_id, ticker in results:
             if ticker not in latest_by_ticker:
                 latest_by_ticker[ticker] = trade_id
-        
+
         return latest_by_ticker
-    
+
     def get_all_trades(
         self,
         start_date: datetime | None = None,
@@ -788,21 +758,21 @@ class TradeRepository:
     ) -> Sequence[Trade]:
         """Get all trades with optional filters."""
         stmt = select(Trade).options(joinedload(Trade.asset))
-        
+
         if start_date:
             stmt = stmt.where(Trade.trade_at >= start_date)
         if end_date:
             stmt = stmt.where(Trade.trade_at <= end_date)
         if action:
             stmt = stmt.where(Trade.action == action)
-        
+
         stmt = stmt.order_by(Trade.trade_at.desc(), Trade.id.desc())
-        
+
         if limit:
             stmt = stmt.limit(limit)
-        
+
         return self.session.scalars(stmt).all()
-    
+
     def get_realized_pnl_summary(
         self,
         start_date: datetime | None = None,
@@ -813,20 +783,20 @@ class TradeRepository:
             func.sum(Trade.realized_pnl).label("total_realized"),
             func.sum(func.abs(Trade.fees)).label("total_fees"),
         )
-        
+
         if start_date:
             stmt = stmt.where(Trade.trade_at >= start_date)
         if end_date:
             stmt = stmt.where(Trade.trade_at <= end_date)
-        
+
         result = self.session.execute(stmt).first()
-        
+
         return {
             "total_realized_pnl": result.total_realized or 0.0,
             "total_fees": result.total_fees or 0.0,
             "net_realized_pnl": (result.total_realized or 0.0) - (result.total_fees or 0.0),
         }
-    
+
     def update_trade(
         self,
         trade_id: int,
@@ -837,23 +807,23 @@ class TradeRepository:
     ) -> Trade | None:
         """
         Update an existing trade's editable fields.
-        
+
         Note: Does NOT recalculate realized_pnl - caller must handle reconciliation.
-        
+
         Args:
             trade_id: ID of trade to update
             shares: New share count (if provided)
             price: New price per share (if provided)
             fees: New fee amount (if provided)
             trade_at: New trade date (if provided)
-            
+
         Returns:
             Updated Trade or None if not found
         """
         trade = self.get_by_id(trade_id)
         if not trade:
             return None
-        
+
         if shares is not None:
             trade.shares = shares
         if price is not None:
@@ -862,23 +832,23 @@ class TradeRepository:
             trade.fees = fees
         if trade_at is not None:
             trade.trade_at = trade_at
-        
+
         self.session.flush()
         return trade
-    
+
     def delete_trade(self, trade_id: int) -> bool:
         """
         Delete a trade by ID.
-        
+
         Note: Does NOT handle cascading effects - caller must handle reconciliation.
-        
+
         Returns:
             True if deleted, False if not found
         """
         trade = self.get_by_id(trade_id)
         if not trade:
             return False
-        
+
         self.session.delete(trade)
         self.session.flush()
         return True
@@ -890,30 +860,30 @@ class TradeRepository:
     ) -> Sequence[Trade]:
         """
         Get all trades in chronological order for position reconstruction.
-        
+
         Args:
             start_date: Optional start date (inclusive)
             end_date: Optional end date (inclusive)
-            
+
         Returns:
             Trades sorted by date ASC, id ASC
         """
         stmt = select(Trade).options(joinedload(Trade.asset))
-        
+
         if start_date:
             stmt = stmt.where(Trade.trade_at >= start_date)
         if end_date:
             stmt = stmt.where(Trade.trade_at <= end_date)
-        
+
         stmt = stmt.order_by(Trade.trade_at.asc(), Trade.id.asc())
         return self.session.scalars(stmt).all()
-    
+
     def list_trades_for_asset_chronological(self, asset_id: int) -> Sequence[Trade]:
         """
         Get all trades for an asset in chronological order.
-        
+
         Used for position reconstruction after trade edit/delete.
-        
+
         Returns:
             Trades sorted by trade_at ASC, id ASC
         """
@@ -928,45 +898,43 @@ class TradeRepository:
 class PositionRepository:
     """
     Repository for position state operations.
-    
+
     Manages current position inventory (long/short) and average costs.
     Works with Trade ledger for complete transaction history.
     """
-    
+
     def __init__(self, session: Session):
         self.session = session
-    
+
     def get_by_asset_id(self, asset_id: int) -> Position | None:
         """Get position state for an asset."""
         return self.session.get(Position, asset_id)
-    
+
     def get_or_create(self, asset_id: int) -> tuple[Position, bool]:
         """Get existing position state or create a new one."""
         position = self.get_by_asset_id(asset_id)
         if position:
             return position, False
-        
+
         position = Position(asset_id=asset_id)
         self.session.add(position)
         self.session.flush()
         return position, True
-    
+
     def get_all_active_positions(self) -> Sequence[Position]:
         """Get all position states with non-zero long or short shares."""
         stmt = (
             select(Position)
             .options(joinedload(Position.asset))
-            .where(
-                (Position.long_shares > 0) | (Position.short_shares > 0)
-            )
+            .where((Position.long_shares > 0) | (Position.short_shares > 0))
             .order_by(Position.asset_id)
         )
         return self.session.scalars(stmt).all()
-    
+
     def get_position_summary(self) -> list[dict]:
         """
         Get position summary for analytics (replaces old position aggregation).
-        
+
         Returns list of dicts with ticker, long/short shares, avg costs, etc.
         """
         stmt = (
@@ -985,10 +953,10 @@ class PositionRepository:
             .join(Asset, Asset.id == Position.asset_id)
             .where(
                 Asset.status == AssetStatus.OWNED,
-                (Position.long_shares > 0) | (Position.short_shares > 0)
+                (Position.long_shares > 0) | (Position.short_shares > 0),
             )
         )
-        
+
         results = self.session.execute(stmt).all()
         return [
             {
@@ -1004,7 +972,7 @@ class PositionRepository:
             }
             for r in results
         ]
-    
+
     def update_state(
         self,
         asset_id: int,
@@ -1016,7 +984,7 @@ class PositionRepository:
     ) -> Position:
         """Update position state fields."""
         position, _ = self.get_or_create(asset_id)
-        
+
         if long_shares is not None:
             position.long_shares = long_shares
         if long_avg_cost is not None:
@@ -1027,28 +995,23 @@ class PositionRepository:
             position.short_avg_price = short_avg_price
         if realized_pnl is not None:
             position.realized_pnl = realized_pnl
-        
+
         self.session.flush()
         return position
-    
-    
+
     def get_net_invested_by_asset(self, asset_id: int) -> float:
         """
         Calculate net invested amount for a single asset from trade history.
-        
+
         Net invested = Σ(buy_shares * buy_price + buy_fees) - Σ(sell_shares * sell_price - sell_fees)
-        
+
         Returns:
             Net invested amount (cash still at risk after taking profits).
         """
         # Get all trades for this asset
-        stmt = (
-            select(Trade)
-            .where(Trade.asset_id == asset_id)
-            .order_by(Trade.trade_at, Trade.id)
-        )
+        stmt = select(Trade).where(Trade.asset_id == asset_id).order_by(Trade.trade_at, Trade.id)
         trades = self.session.scalars(stmt).all()
-        
+
         net_invested = 0.0
         for trade in trades:
             if trade.action in (TradeAction.BUY, TradeAction.COVER):
@@ -1057,86 +1020,84 @@ class PositionRepository:
             elif trade.action in (TradeAction.SELL, TradeAction.SHORT):
                 # Money coming in (selling)
                 net_invested -= trade.shares * trade.price - trade.fees
-        
+
         return net_invested
-    
+
     def recalculate_net_invested(self, asset_id: int) -> Position:
         """
         Recalculate and store net_invested for an asset from trade history.
-        
+
         This should be called after each trade to keep the position's
         net_invested field in sync with the trade ledger.
-        
+
         Net Invested Avg Cost = net_invested / long_shares
-        
+
         Returns:
             Updated Position with recalculated net_invested.
         """
         position, _ = self.get_or_create(asset_id)
-        
+
         # Calculate net invested from trade history
         net_invested = self.get_net_invested_by_asset(asset_id)
-        
+
         # Store in position record
         position.net_invested = net_invested
         self.session.flush()
-        
+
         return position
-    
+
     def recalculate_all_net_invested(self) -> dict[int, float]:
         """
         Recalculate net_invested for all assets with positions.
-        
+
         Useful for data migration or fixing historical records.
-        
+
         Returns:
             Dict mapping asset_id to updated net_invested values.
         """
         # Get all assets with active positions
-        stmt = (
-            select(Position.asset_id)
-            .where((Position.long_shares > 0) | (Position.short_shares > 0))
+        stmt = select(Position.asset_id).where(
+            (Position.long_shares > 0) | (Position.short_shares > 0)
         )
         asset_ids = self.session.scalars(stmt).all()
-        
+
         result = {}
         for asset_id in asset_ids:
             position = self.recalculate_net_invested(asset_id)
             result[asset_id] = position.net_invested
-        
+
         return result
-    
+
     def get_net_invested_summary(self) -> dict[int, float]:
         """
         Get net invested amount for all assets with positions.
-        
+
         Returns stored net_invested values from positions table.
-        
+
         Returns:
             Dict mapping asset_id to net invested amount.
         """
-        stmt = (
-            select(Position.asset_id, Position.net_invested)
-            .where((Position.long_shares > 0) | (Position.short_shares > 0))
+        stmt = select(Position.asset_id, Position.net_invested).where(
+            (Position.long_shares > 0) | (Position.short_shares > 0)
         )
         results = self.session.execute(stmt).all()
-        
+
         return {r.asset_id: r.net_invested for r in results}
 
 
 class CashRepository:
     """
     Repository for cash transaction operations.
-    
+
     Manages cash position tracking including:
     - Deposits/withdrawals
     - Trade-related cash flows
     - Cash balance calculations
     """
-    
+
     def __init__(self, session: Session):
         self.session = session
-    
+
     def create_transaction(
         self,
         transaction_at: datetime,
@@ -1148,7 +1109,7 @@ class CashRepository:
     ) -> CashTransaction:
         """
         Create a new cash transaction.
-        
+
         Args:
             transaction_at: Date of transaction
             transaction_type: Type of transaction
@@ -1156,7 +1117,7 @@ class CashRepository:
             trade_id: Optional reference to related trade
             asset_id: Optional reference to related asset
             description: Optional description
-            
+
         Returns:
             Created CashTransaction
         """
@@ -1171,7 +1132,7 @@ class CashRepository:
         self.session.add(transaction)
         self.session.flush()
         return transaction
-    
+
     def deposit(
         self,
         amount: float,
@@ -1180,28 +1141,28 @@ class CashRepository:
     ) -> CashTransaction:
         """
         Record a cash deposit (capital injection).
-        
+
         Args:
             amount: Deposit amount (positive)
             transaction_at: Date (defaults to today)a
             description: Optional description
-            
+
         Returns:
             Created CashTransaction
         """
         if amount <= 0:
             raise ValueError("Deposit amount must be positive")
-        
+
         if transaction_at is None:
             transaction_at = datetime.now()
-        
+
         return self.create_transaction(
             transaction_at=transaction_at,
             transaction_type=CashTransactionType.DEPOSIT,
             amount=amount,
             description=description or "Cash deposit",
         )
-    
+
     def withdraw(
         self,
         amount: float,
@@ -1210,28 +1171,28 @@ class CashRepository:
     ) -> CashTransaction:
         """
         Record a cash withdrawal.
-        
+
         Args:
             amount: Withdrawal amount (positive, will be stored as negative)
             transaction_at: Date (defaults to today)
             description: Optional description
-            
+
         Returns:
             Created CashTransaction
         """
         if amount <= 0:
             raise ValueError("Withdrawal amount must be positive")
-        
+
         if transaction_at is None:
             transaction_at = datetime.now()
-        
+
         return self.create_transaction(
             transaction_at=transaction_at,
             transaction_type=CashTransactionType.WITHDRAW,
             amount=-amount,  # Store as negative (outflow)
             description=description or "Cash withdrawal",
         )
-    
+
     def record_dividend(
         self,
         asset_id: int,
@@ -1241,30 +1202,30 @@ class CashRepository:
     ) -> tuple[CashTransaction, bool]:
         """
         Record a dividend payment with idempotency.
-        
+
         Uses deduplication strategy: asset_id + transaction_at + amount
         to prevent duplicate dividend entries on reruns.
-        
+
         Args:
             asset_id: Asset ID for dividend attribution
             amount: Dividend amount (positive, cash inflow)
             transaction_at: Ex-dividend or payment date (YYYY-MM-DD)
             description: Optional description
-            
+
         Returns:
             Tuple of (CashTransaction, created) where created=False for duplicates
-            
+
         Raises:
             ValueError: If amount is not positive
         """
         if amount <= 0:
             raise ValueError("Dividend amount must be positive")
-        
+
         # Check for duplicate
         existing = self.find_dividend(asset_id, amount, transaction_at)
         if existing:
             return existing, False
-        
+
         # Create new dividend transaction
         transaction = CashTransaction(
             transaction_at=transaction_at,
@@ -1276,7 +1237,7 @@ class CashRepository:
         self.session.add(transaction)
         self.session.flush()
         return transaction, True
-    
+
     def find_dividend(
         self,
         asset_id: int,
@@ -1285,28 +1246,25 @@ class CashRepository:
     ) -> CashTransaction | None:
         """
         Find existing dividend matching the dedup key.
-        
+
         Dedup key: asset_id + transaction_at + amount
-        
+
         Args:
             asset_id: Asset ID
             amount: Dividend amount
             transaction_at: Transaction date
-            
+
         Returns:
             Existing CashTransaction if found, else None
         """
-        stmt = (
-            select(CashTransaction)
-            .where(
-                CashTransaction.asset_id == asset_id,
-                CashTransaction.transaction_at == transaction_at,
-                CashTransaction.transaction_type == CashTransactionType.DIVIDEND,
-                CashTransaction.amount == amount,
-            )
+        stmt = select(CashTransaction).where(
+            CashTransaction.asset_id == asset_id,
+            CashTransaction.transaction_at == transaction_at,
+            CashTransaction.transaction_type == CashTransactionType.DIVIDEND,
+            CashTransaction.amount == amount,
         )
         return self.session.scalar(stmt)
-    
+
     def get_dividends(
         self,
         asset_id: int | None = None,
@@ -1315,30 +1273,29 @@ class CashRepository:
     ) -> Sequence[CashTransaction]:
         """
         Get dividend transactions with optional filters.
-        
+
         Args:
             asset_id: Filter by specific asset
             start_date: Filter from this date (inclusive)
             end_date: Filter to this date (inclusive)
-            
+
         Returns:
             Sequence of dividend CashTransaction records
         """
-        stmt = (
-            select(CashTransaction)
-            .where(CashTransaction.transaction_type == CashTransactionType.DIVIDEND)
+        stmt = select(CashTransaction).where(
+            CashTransaction.transaction_type == CashTransactionType.DIVIDEND
         )
-        
+
         if asset_id is not None:
             stmt = stmt.where(CashTransaction.asset_id == asset_id)
         if start_date:
             stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
             stmt = stmt.where(CashTransaction.transaction_at <= end_date)
-        
+
         stmt = stmt.order_by(CashTransaction.transaction_at.desc())
         return self.session.scalars(stmt).all()
-    
+
     def get_dividend_summary_by_asset(
         self,
         start_date: datetime | None = None,
@@ -1346,11 +1303,11 @@ class CashRepository:
     ) -> dict[int, float]:
         """
         Get total dividends grouped by asset.
-        
+
         Args:
             start_date: Filter from this date
             end_date: Filter to this date
-            
+
         Returns:
             Dict mapping asset_id to total dividend amount
         """
@@ -1365,12 +1322,12 @@ class CashRepository:
             )
             .group_by(CashTransaction.asset_id)
         )
-        
+
         if start_date:
             stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
             stmt = stmt.where(CashTransaction.transaction_at <= end_date)
-        
+
         results = self.session.execute(stmt).all()
         return {r.asset_id: r.total for r in results}
 
@@ -1381,21 +1338,21 @@ class CashRepository:
     ) -> list[CashTransaction]:
         """
         Record cash flow from a trade.
-        
+
         BUY/COVER: Cash outflow = -(shares * price + fees)
         SELL/SHORT: Cash inflow = +(shares * price - fees)
-        
+
         Args:
             trade: The Trade object
             fees: Trading fees (recorded separately)
-            
+
         Returns:
             List of created CashTransactions (trade + optional fee)
         """
         transactions = []
         ticker = trade.asset.ticker if trade.asset else "?"
         gross = trade.shares * trade.price
-        
+
         # Map trade action to cash transaction type
         type_map = {
             TradeAction.BUY: CashTransactionType.BUY,
@@ -1403,9 +1360,9 @@ class CashRepository:
             TradeAction.SHORT: CashTransactionType.SHORT,
             TradeAction.COVER: CashTransactionType.COVER,
         }
-        
+
         tx_type = type_map[trade.action]
-        
+
         # Calculate signed amount
         if trade.action in (TradeAction.BUY, TradeAction.COVER):
             # Cash outflow
@@ -1415,7 +1372,7 @@ class CashRepository:
             # Cash inflow (SELL, SHORT)
             amount = +gross
             desc = f"{trade.action.value} {trade.shares} {ticker} @ ${trade.price:.2f}"
-        
+
         # Record main trade cash flow
         tx = self.create_transaction(
             transaction_at=trade.trade_at,
@@ -1426,7 +1383,7 @@ class CashRepository:
             description=desc,
         )
         transactions.append(tx)
-        
+
         # Record fees separately if present
         if fees > 0:
             fee_tx = self.create_transaction(
@@ -1438,34 +1395,31 @@ class CashRepository:
                 description=f"Trading fee for {ticker}",
             )
             transactions.append(fee_tx)
-        
+
         return transactions
-    
+
     def delete_transactions_by_trade_id(self, trade_id: int) -> int:
         """
         Delete all cash transactions linked to a specific trade.
-        
+
         Used during trade reconciliation to remove and regenerate cash flows.
-        
+
         Args:
             trade_id: ID of the trade whose cash transactions should be deleted
-            
+
         Returns:
             Number of transactions deleted
         """
-        stmt = (
-            select(CashTransaction)
-            .where(CashTransaction.trade_id == trade_id)
-        )
+        stmt = select(CashTransaction).where(CashTransaction.trade_id == trade_id)
         transactions = self.session.scalars(stmt).all()
         count = len(transactions)
-        
+
         for tx in transactions:
             self.session.delete(tx)
-        
+
         self.session.flush()
         return count
-    
+
     def get_all_transactions(
         self,
         start_date: datetime | None = None,
@@ -1475,43 +1429,43 @@ class CashRepository:
     ) -> Sequence[CashTransaction]:
         """Get all cash transactions with optional filters."""
         stmt = select(CashTransaction)
-        
+
         if start_date:
             stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
             stmt = stmt.where(CashTransaction.transaction_at <= end_date)
         if transaction_type:
             stmt = stmt.where(CashTransaction.transaction_type == transaction_type)
-        
+
         stmt = stmt.order_by(CashTransaction.transaction_at.desc(), CashTransaction.id.desc())
-        
+
         if limit:
             stmt = stmt.limit(limit)
-        
+
         return self.session.scalars(stmt).all()
-    
+
     def get_balance(
         self,
         as_of_date: str | None = None,
     ) -> float:
         """
         Calculate cash balance as of a given date.
-        
+
         Args:
             as_of_date: Calculate balance up to this date (inclusive).
                        If None, uses all transactions.
-                       
+
         Returns:
             Cash balance (sum of all signed amounts)
         """
         stmt = select(func.sum(CashTransaction.amount))
-        
+
         if as_of_date:
             stmt = stmt.where(CashTransaction.transaction_at <= as_of_date)
-        
+
         result = self.session.scalar(stmt)
         return result or 0.0
-    
+
     def get_summary(
         self,
         start_date: str | None = None,
@@ -1519,9 +1473,9 @@ class CashRepository:
     ) -> dict:
         """
         Get cash flow summary for a period.
-        
+
         Returns:
-            Dict with total_inflows, total_outflows, net_flow, 
+            Dict with total_inflows, total_outflows, net_flow,
             starting_balance, ending_balance
         """
         # Calculate starting balance (before start_date)
@@ -1534,23 +1488,23 @@ class CashRepository:
             )
             on_start = self.session.scalar(stmt) or 0.0
             starting_balance -= on_start
-        
+
         # Get transactions in range
         stmt = select(CashTransaction.amount)
         if start_date:
             stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
             stmt = stmt.where(CashTransaction.transaction_at <= end_date)
-        
+
         amounts = self.session.scalars(stmt).all()
-        
+
         total_inflows = sum(a for a in amounts if a > 0)
         total_outflows = sum(abs(a) for a in amounts if a < 0)
         net_flow = sum(amounts)
-        
+
         # Ending balance
         ending_balance = self.get_balance(as_of_date=end_date)
-        
+
         return {
             "starting_balance": starting_balance,
             "ending_balance": ending_balance,
@@ -1558,7 +1512,7 @@ class CashRepository:
             "total_outflows": total_outflows,
             "net_flow": net_flow,
         }
-    
+
     def get_balance_by_type(
         self,
         start_date: str | None = None,
@@ -1566,7 +1520,7 @@ class CashRepository:
     ) -> dict[str, float]:
         """
         Get cash flow breakdown by transaction type.
-        
+
         Returns:
             Dict mapping transaction type to total amount
         """
@@ -1574,16 +1528,16 @@ class CashRepository:
             CashTransaction.transaction_type,
             func.sum(CashTransaction.amount).label("total"),
         ).group_by(CashTransaction.transaction_type)
-        
+
         if start_date:
             stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
             stmt = stmt.where(CashTransaction.transaction_at <= end_date)
-        
+
         results = self.session.execute(stmt).all()
-        
+
         return {r.transaction_type.value: r.total or 0.0 for r in results}
-    
+
     def get_ledger(
         self,
         start_date: str | None = None,
@@ -1593,7 +1547,7 @@ class CashRepository:
     ) -> list[dict]:
         """
         Get cash ledger with running balance.
-        
+
         Returns list of dicts with date, type, amount, description, balance.
         """
         # Get starting balance before the period
@@ -1603,14 +1557,14 @@ class CashRepository:
                 CashTransaction.transaction_at < start_date
             )
             starting_balance = self.session.scalar(stmt) or 0.0
-        
+
         # Get transactions in period (chronological order for running balance)
         stmt = select(CashTransaction)
         if start_date:
             stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
             stmt = stmt.where(CashTransaction.transaction_at <= end_date)
-        
+
         if sort_desc:
             stmt = stmt.order_by(
                 CashTransaction.transaction_at.desc(),
@@ -1619,27 +1573,29 @@ class CashRepository:
             stmt = stmt.order_by(
                 CashTransaction.transaction_at.asc(),
             )
-        
+
         transactions = self.session.scalars(stmt).all()
-        
+
         # Build ledger with running balance
         ledger = []
         balance = starting_balance
-        
+
         for tx in transactions:
             balance += tx.amount
-            ledger.append({
-                "date": tx.transaction_at,
-                "type": tx.transaction_type.value,
-                "amount": tx.amount,
-                "description": tx.description or "",
-                "balance": balance,
-            })
-        
+            ledger.append(
+                {
+                    "date": tx.transaction_at,
+                    "type": tx.transaction_type.value,
+                    "amount": tx.amount,
+                    "description": tx.description or "",
+                    "balance": balance,
+                }
+            )
+
         # If limit specified, return last N entries
         if limit and len(ledger) > limit:
             ledger = ledger[-limit:]
-        
+
         return ledger
 
     def get_daily_balances(
@@ -1649,14 +1605,14 @@ class CashRepository:
     ) -> dict[str, float]:
         """
         Get end-of-day cash balance for each date with transactions.
-        
+
         For NAV calculation, forward-fill these balances to cover
         days without transactions.
-        
+
         Args:
             start_date: Optional start date (inclusive)
             end_date: Optional end date (inclusive)
-            
+
         Returns:
             Dict mapping date string to EOD cash balance
         """
@@ -1667,7 +1623,7 @@ class CashRepository:
                 CashTransaction.transaction_at < start_date
             )
             starting_balance = self.session.scalar(stmt) or 0.0
-        
+
         # Get daily net cash flows
         stmt = (
             select(
@@ -1677,22 +1633,22 @@ class CashRepository:
             .group_by(CashTransaction.transaction_at)
             .order_by(CashTransaction.transaction_at)
         )
-        
+
         if start_date:
             stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
             stmt = stmt.where(CashTransaction.transaction_at <= end_date)
-        
+
         results = self.session.execute(stmt).all()
-        
+
         # Build cumulative balance by date
         balances = {}
         running = starting_balance
-        
+
         for r in results:
             running += r.daily_flow
             balances[r.transaction_at] = running
-        
+
         return balances
 
     def list_all_chronological(
@@ -1702,21 +1658,21 @@ class CashRepository:
     ) -> Sequence[CashTransaction]:
         """
         Get all cash transactions in chronological order.
-        
+
         Args:
             start_date: Optional start date (inclusive)
             end_date: Optional end date (inclusive)
-            
+
         Returns:
             CashTransactions sorted by date ASC, id ASC
         """
         stmt = select(CashTransaction)
-        
+
         if start_date:
             stmt = stmt.where(CashTransaction.transaction_at >= start_date)
         if end_date:
             stmt = stmt.where(CashTransaction.transaction_at <= end_date)
-        
+
         stmt = stmt.order_by(
             CashTransaction.transaction_at.asc(),
             CashTransaction.id.asc(),
@@ -1726,14 +1682,14 @@ class CashRepository:
 
 class NoteTargetRepository:
     """Repository for NoteTarget operations."""
-    
+
     def __init__(self, session: Session):
         self.session = session
-    
+
     def get_by_id(self, target_id: int) -> NoteTarget | None:
         """Get target by ID."""
         return self.session.get(NoteTarget, target_id)
-    
+
     def get_or_create_asset_target(self, asset_id: int) -> NoteTarget:
         """Get or create a target for an asset."""
         stmt = select(NoteTarget).where(
@@ -1743,12 +1699,12 @@ class NoteTargetRepository:
         target = self.session.scalar(stmt)
         if target:
             return target
-        
+
         target = NoteTarget(kind=NoteTargetKind.ASSET, asset_id=asset_id)
         self.session.add(target)
         self.session.flush()
         return target
-    
+
     def get_or_create_trade_target(self, trade_id: int) -> NoteTarget:
         """Get or create a target for a trade."""
         stmt = select(NoteTarget).where(
@@ -1758,15 +1714,13 @@ class NoteTargetRepository:
         target = self.session.scalar(stmt)
         if target:
             return target
-        
+
         target = NoteTarget(kind=NoteTargetKind.TRADE, trade_id=trade_id)
         self.session.add(target)
         self.session.flush()
         return target
-    
-    def get_or_create_market_target(
-        self, symbol: str, name: str | None = None
-    ) -> NoteTarget:
+
+    def get_or_create_market_target(self, symbol: str, name: str | None = None) -> NoteTarget:
         """Get or create a target for a market/index symbol."""
         symbol = symbol.upper()
         stmt = select(NoteTarget).where(
@@ -1780,7 +1734,7 @@ class NoteTargetRepository:
                 target.symbol_name = name
                 self.session.flush()
             return target
-        
+
         target = NoteTarget(
             kind=NoteTargetKind.MARKET,
             symbol=symbol,
@@ -1789,19 +1743,19 @@ class NoteTargetRepository:
         self.session.add(target)
         self.session.flush()
         return target
-    
+
     def get_or_create_journal_target(self) -> NoteTarget:
         """Get or create a journal target (singleton for general entries)."""
         stmt = select(NoteTarget).where(NoteTarget.kind == NoteTargetKind.JOURNAL)
         target = self.session.scalar(stmt)
         if target:
             return target
-        
+
         target = NoteTarget(kind=NoteTargetKind.JOURNAL)
         self.session.add(target)
         self.session.flush()
         return target
-    
+
     def get_asset_target(self, asset_id: int) -> NoteTarget | None:
         """Get target for an asset if exists."""
         stmt = select(NoteTarget).where(
@@ -1809,7 +1763,7 @@ class NoteTargetRepository:
             NoteTarget.asset_id == asset_id,
         )
         return self.session.scalar(stmt)
-    
+
     def list_market_targets(self) -> Sequence[NoteTarget]:
         """List all market targets."""
         stmt = (
@@ -1822,14 +1776,14 @@ class NoteTargetRepository:
 
 class NoteRepository:
     """Repository for Note operations."""
-    
+
     def __init__(self, session: Session):
         self.session = session
-    
+
     def get_by_id(self, note_id: int) -> Note | None:
         """Get note by ID."""
         return self.session.get(Note, note_id)
-    
+
     def create(
         self,
         target_id: int,
@@ -1853,7 +1807,7 @@ class NoteRepository:
         self.session.add(note)
         self.session.flush()
         return note
-    
+
     def update(
         self,
         note_id: int,
@@ -1868,7 +1822,7 @@ class NoteRepository:
         note = self.get_by_id(note_id)
         if not note:
             return None
-        
+
         if body_md is not None:
             note.body_md = body_md
         if title is not None:
@@ -1881,10 +1835,10 @@ class NoteRepository:
             note.tags = tags
         if note_type is not None:
             note.note_type = note_type
-        
+
         self.session.flush()
         return note
-    
+
     def list_by_target(
         self,
         target_id: int,
@@ -1897,18 +1851,18 @@ class NoteRepository:
             .options(joinedload(Note.target).joinedload(NoteTarget.asset))
             .where(Note.target_id == target_id)
         )
-        
+
         if not include_archived:
             stmt = stmt.where(Note.status == "ACTIVE")
-        
+
         # Pinned first, then by created_at desc
         stmt = stmt.order_by(Note.pinned.desc(), Note.created_at.desc())
-        
+
         if limit:
             stmt = stmt.limit(limit)
-        
+
         return self.session.scalars(stmt).all()
-    
+
     def list_by_asset(
         self,
         asset_id: int,
@@ -1925,17 +1879,17 @@ class NoteRepository:
                 NoteTarget.asset_id == asset_id,
             )
         )
-        
+
         if not include_archived:
             stmt = stmt.where(Note.status == "ACTIVE")
-        
+
         stmt = stmt.order_by(Note.pinned.desc(), Note.created_at.desc())
-        
+
         if limit:
             stmt = stmt.limit(limit)
-        
+
         return self.session.scalars(stmt).all()
-    
+
     def list_by_type(
         self,
         note_type: NoteType,
@@ -1948,35 +1902,32 @@ class NoteRepository:
             .options(joinedload(Note.target).joinedload(NoteTarget.asset))
             .where(Note.note_type == note_type)
         )
-        
+
         if not include_archived:
             stmt = stmt.where(Note.status == "ACTIVE")
-        
+
         stmt = stmt.order_by(Note.pinned.desc(), Note.created_at.desc())
-        
+
         if limit:
             stmt = stmt.limit(limit)
-        
+
         return self.session.scalars(stmt).all()
-    
+
     def list_recent(
         self,
         limit: int = 20,
         include_archived: bool = False,
     ) -> Sequence[Note]:
         """List recent notes across all targets."""
-        stmt = (
-            select(Note)
-            .options(joinedload(Note.target).joinedload(NoteTarget.asset))
-        )
-        
+        stmt = select(Note).options(joinedload(Note.target).joinedload(NoteTarget.asset))
+
         if not include_archived:
             stmt = stmt.where(Note.status == "ACTIVE")
-        
+
         stmt = stmt.order_by(Note.created_at.desc()).limit(limit)
-        
+
         return self.session.scalars(stmt).all()
-    
+
     def search_by_tag(
         self,
         tag: str,
@@ -1991,17 +1942,17 @@ class NoteRepository:
             .options(joinedload(Note.target).joinedload(NoteTarget.asset))
             .where(Note.tags.like(pattern))
         )
-        
+
         if not include_archived:
             stmt = stmt.where(Note.status == "ACTIVE")
-        
+
         stmt = stmt.order_by(Note.created_at.desc())
-        
+
         if limit:
             stmt = stmt.limit(limit)
-        
+
         return self.session.scalars(stmt).all()
-    
+
     def set_status(self, note_id: int, status: str) -> Note | None:
         """Set note status (ACTIVE, ARCHIVED, DELETED)."""
         note = self.get_by_id(note_id)
@@ -2010,7 +1961,7 @@ class NoteRepository:
         note.status = status
         self.session.flush()
         return note
-    
+
     def set_pinned(self, note_id: int, pinned: bool) -> Note | None:
         """Set pinned status."""
         note = self.get_by_id(note_id)
@@ -2019,7 +1970,7 @@ class NoteRepository:
         note.pinned = pinned
         self.session.flush()
         return note
-    
+
     def delete(self, note_id: int) -> bool:
         """Soft delete a note."""
         note = self.get_by_id(note_id)
@@ -2028,7 +1979,7 @@ class NoteRepository:
         note.status = "DELETED"
         self.session.flush()
         return True
-    
+
     def hard_delete(self, note_id: int) -> bool:
         """Permanently delete a note."""
         note = self.get_by_id(note_id)
@@ -2041,33 +1992,39 @@ class NoteRepository:
 
 class MarketIndexRepository:
     """Repository for MarketIndex operations."""
-    
+
     def __init__(self, session: Session):
         self.session = session
-    
+
     def get_by_id(self, index_id: int) -> "MarketIndex | None":
         """Get market index by ID."""
         from db.models import MarketIndex
+
         return self.session.get(MarketIndex, index_id)
-    
+
     def get_by_symbol(self, symbol: str) -> "MarketIndex | None":
         """Get market index by symbol."""
         from db.models import MarketIndex
+
         stmt = select(MarketIndex).where(MarketIndex.symbol == symbol.upper())
         return self.session.scalar(stmt)
-    
+
     def get_all(self) -> "Sequence[MarketIndex]":
         """Get all market indices."""
         from db.models import MarketIndex
+
         stmt = select(MarketIndex).order_by(MarketIndex.symbol)
         return self.session.scalars(stmt).all()
-    
+
     def get_by_category(self, category: str) -> "Sequence[MarketIndex]":
         """Get indices filtered by category."""
         from db.models import MarketIndex, IndexCategory
-        stmt = select(MarketIndex).where(MarketIndex.category == category).order_by(MarketIndex.symbol)
+
+        stmt = (
+            select(MarketIndex).where(MarketIndex.category == category).order_by(MarketIndex.symbol)
+        )
         return self.session.scalars(stmt).all()
-    
+
     def create(
         self,
         symbol: str,
@@ -2077,6 +2034,7 @@ class MarketIndexRepository:
     ) -> "MarketIndex":
         """Create a new market index."""
         from db.models import MarketIndex, IndexCategory
+
         index = MarketIndex(
             symbol=symbol.upper(),
             name=name,
@@ -2086,7 +2044,7 @@ class MarketIndexRepository:
         self.session.add(index)
         self.session.flush()
         return index
-    
+
     def get_or_create(
         self,
         symbol: str,
@@ -2095,7 +2053,7 @@ class MarketIndexRepository:
     ) -> tuple["MarketIndex", bool]:
         """
         Get existing index or create new one.
-        
+
         Returns:
             Tuple of (index, created) where created is True if new.
         """
@@ -2107,32 +2065,30 @@ class MarketIndexRepository:
 
 class IndexPriceRepository:
     """Repository for index price data operations."""
-    
+
     def __init__(self, session: Session):
         self.session = session
-    
+
     def get_latest_date(self, index_id: int) -> str | None:
         """Get the most recent price date for an index."""
         from db.models import IndexPriceDaily
-        stmt = (
-            select(func.max(IndexPriceDaily.date))
-            .where(IndexPriceDaily.index_id == index_id)
-        )
+
+        stmt = select(func.max(IndexPriceDaily.date)).where(IndexPriceDaily.index_id == index_id)
         return self.session.scalar(stmt)
-    
+
     def get_latest_price(self, index_id: int) -> "IndexPriceDaily | None":
         """Get the most recent price record for an index."""
         from db.models import IndexPriceDaily
+
         latest_date = self.get_latest_date(index_id)
         if not latest_date:
             return None
-        
-        stmt = (
-            select(IndexPriceDaily)
-            .where(IndexPriceDaily.index_id == index_id, IndexPriceDaily.date == latest_date)
+
+        stmt = select(IndexPriceDaily).where(
+            IndexPriceDaily.index_id == index_id, IndexPriceDaily.date == latest_date
         )
         return self.session.scalar(stmt)
-    
+
     def get_price_history(
         self,
         index_id: int,
@@ -2141,16 +2097,17 @@ class IndexPriceRepository:
     ) -> "Sequence[IndexPriceDaily]":
         """Get price history for an index within date range."""
         from db.models import IndexPriceDaily
+
         stmt = select(IndexPriceDaily).where(IndexPriceDaily.index_id == index_id)
-        
+
         if start_date:
             stmt = stmt.where(IndexPriceDaily.date >= start_date)
         if end_date:
             stmt = stmt.where(IndexPriceDaily.date <= end_date)
-        
+
         stmt = stmt.order_by(IndexPriceDaily.date)
         return self.session.scalars(stmt).all()
-    
+
     def get_price_history_for_indices(
         self,
         index_ids: list[int] | None = None,
@@ -2159,11 +2116,12 @@ class IndexPriceRepository:
     ) -> list[dict]:
         """
         Get price history for multiple indices.
-        
+
         Returns:
             List of dicts with [date, index_id, symbol, close].
         """
         from db.models import IndexPriceDaily, MarketIndex
+
         stmt = (
             select(
                 IndexPriceDaily.date,
@@ -2174,16 +2132,16 @@ class IndexPriceRepository:
             .join(MarketIndex, IndexPriceDaily.index_id == MarketIndex.id)
             .where(IndexPriceDaily.close.is_not(None))
         )
-        
+
         if index_ids:
             stmt = stmt.where(IndexPriceDaily.index_id.in_(index_ids))
         if start_date:
             stmt = stmt.where(IndexPriceDaily.date >= start_date)
         if end_date:
             stmt = stmt.where(IndexPriceDaily.date <= end_date)
-        
+
         stmt = stmt.order_by(IndexPriceDaily.date)
-        
+
         results = self.session.execute(stmt).all()
         return [
             {
@@ -2194,7 +2152,7 @@ class IndexPriceRepository:
             }
             for r in results
         ]
-    
+
     def bulk_upsert_prices(
         self,
         index_id: int,
@@ -2202,15 +2160,16 @@ class IndexPriceRepository:
     ) -> int:
         """
         Bulk insert/update price records (idempotent).
-        
+
         Args:
             index_id: Index ID for the prices.
             price_records: List of dicts with date, open, high, low, close, etc.
-            
+
         Returns:
             Number of records inserted.
         """
         from db.models import IndexPriceDaily
+
         count = 0
         for record in price_records:
             # Check if exists
@@ -2219,7 +2178,7 @@ class IndexPriceRepository:
                 IndexPriceDaily.date == record["date"],
             )
             existing = self.session.scalar(stmt)
-            
+
             if not existing:
                 price = IndexPriceDaily(
                     index_id=index_id,
@@ -2232,45 +2191,39 @@ class IndexPriceRepository:
                 )
                 self.session.add(price)
                 count += 1
-        
+
         self.session.flush()
         return count
-    
+
     def get_latest_prices_for_indices(
         self,
         index_ids: list[int] | None = None,
     ) -> dict[int, "IndexPriceDaily"]:
         """
         Get latest price for multiple indices.
-        
+
         Returns:
             Dict mapping index_id to latest IndexPriceDaily.
         """
         from db.models import IndexPriceDaily
+
         # Subquery to get max date per index
-        subq = (
-            select(
-                IndexPriceDaily.index_id,
-                func.max(IndexPriceDaily.date).label("max_date"),
-            )
-            .group_by(IndexPriceDaily.index_id)
-        )
-        
+        subq = select(
+            IndexPriceDaily.index_id,
+            func.max(IndexPriceDaily.date).label("max_date"),
+        ).group_by(IndexPriceDaily.index_id)
+
         if index_ids:
             subq = subq.where(IndexPriceDaily.index_id.in_(index_ids))
-        
+
         subq = subq.subquery()
-        
+
         # Main query joining with subquery
-        stmt = (
-            select(IndexPriceDaily)
-            .join(
-                subq,
-                (IndexPriceDaily.index_id == subq.c.index_id) &
-                (IndexPriceDaily.date == subq.c.max_date)
-            )
+        stmt = select(IndexPriceDaily).join(
+            subq,
+            (IndexPriceDaily.index_id == subq.c.index_id)
+            & (IndexPriceDaily.date == subq.c.max_date),
         )
-        
+
         prices = self.session.scalars(stmt).all()
         return {p.index_id: p for p in prices}
-

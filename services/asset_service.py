@@ -402,7 +402,7 @@ def delete_assets(
             
             # Safe to delete
             try:
-                if asset_repo.delete_asset(asset.id):
+                if asset_repo.delete_by_id(asset.id):
                     deleted.append(ticker_upper)
                     logger.info(f"Deleted asset: {ticker_upper} (allow_owned={allow_owned}, trades={allow_with_trades})")
                 else:
