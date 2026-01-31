@@ -78,23 +78,37 @@ class PortfolioOptimizer:
         self.trading_days = config.risk.trading_days_per_year
         self.risk_analyzer = RiskAnalyzer()
 
-    def _load_returns(self, tickers: list[str] | None = None) -> pd.DataFrame:
+    def _load_returns(
+        self,
+        tickers: list[str] | None = None,
+        lookback_days: int | None = None,
+    ) -> pd.DataFrame:
         """
         Load historical returns for assets.
 
         Args:
             tickers: Optional list of tickers. If None, loads all owned assets.
+            lookback_days: Optional number of days to look back. If None, uses all available data.
 
         Returns:
             DataFrame with date index and ticker columns containing log returns.
         """
+        from datetime import date, timedelta
+
+        # Calculate start date if lookback_days is specified
+        start_date = None
+        if lookback_days:
+            start_date = (date.today() - timedelta(days=lookback_days)).isoformat()
+
         db = get_db()
         with db.session() as session:
             price_repo = PriceRepository(session)
             if tickers:
-                records = price_repo.get_price_history_for_tickers(tickers)
+                records = price_repo.get_price_history_for_tickers(tickers, start_date=start_date)
             else:
-                records = price_repo.get_price_history_for_assets(status=AssetStatus.OWNED)
+                records = price_repo.get_price_history_for_assets(
+                    status=AssetStatus.OWNED, start_date=start_date
+                )
             prices = pd.DataFrame(records)
 
         if prices.empty:
@@ -236,6 +250,7 @@ class PortfolioOptimizer:
         n_portfolios: int = 500,
         tickers: list[str] | None = None,
         current_weights: pd.Series | None = None,
+        lookback_days: int | None = None,
     ) -> EfficientFrontierResult | None:
         """
         Compute the efficient frontier for a portfolio.
@@ -244,12 +259,15 @@ class PortfolioOptimizer:
             n_portfolios: Number of random portfolios to generate.
             tickers: Optional list of tickers. If None, uses all owned assets.
             current_weights: Current portfolio weights for comparison.
+            lookback_days: Number of days to look back for price history.
+                           Common values: 252 (1 year), 756 (3 years), 1260 (5 years).
+                           If None, uses all available data.
 
         Returns:
             EfficientFrontierResult or None if insufficient data.
         """
         # Load returns
-        returns = self._load_returns(tickers)
+        returns = self._load_returns(tickers, lookback_days=lookback_days)
         if returns.empty or len(returns.columns) < 2:
             return None
 
@@ -416,6 +434,7 @@ class PortfolioOptimizer:
 def compute_efficient_frontier(
     current_weights: pd.Series | None = None,
     n_portfolios: int = 500,
+    lookback_days: int | None = None,
 ) -> EfficientFrontierResult | None:
     """
     Convenience function to compute efficient frontier.
@@ -423,6 +442,9 @@ def compute_efficient_frontier(
     Args:
         current_weights: Optional current portfolio weights.
         n_portfolios: Number of random portfolios to simulate.
+        lookback_days: Number of days to look back for price history.
+                       Common values: 252 (1 year), 756 (3 years), 1260 (5 years).
+                       If None, uses all available data.
 
     Returns:
         EfficientFrontierResult or None if insufficient data.
@@ -431,6 +453,7 @@ def compute_efficient_frontier(
     return optimizer.compute_efficient_frontier(
         n_portfolios=n_portfolios,
         current_weights=current_weights,
+        lookback_days=lookback_days,
     )
 
 

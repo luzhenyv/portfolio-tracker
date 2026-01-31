@@ -719,11 +719,38 @@ def _render_efficient_frontier_section(portfolio_df: pd.DataFrame, summary: dict
     st.divider()
     st.subheader("📊 Efficient Frontier Analysis")
 
+    # Lookback period options (in trading days)
+    lookback_options = {
+        "3 Months": 90,
+        "6 Months": 180,
+        "1 Year": 365,
+        "3 Years": 1095,
+        "All Data": None,
+    }
+
+    # Initialize session state for lookback selection
+    if "frontier_lookback" not in st.session_state:
+        st.session_state.frontier_lookback = "1 Year"
+
+    # Lookback period selector
+    lookback_selection = st.pills(
+        "Historical Data Period",
+        options=list(lookback_options.keys()),
+        default=st.session_state.frontier_lookback,
+        help="Select how many years of historical data to use for computing expected returns and risk metrics",
+    )
+    if lookback_selection != st.session_state.frontier_lookback:
+        st.session_state.frontier_lookback = lookback_selection
+        st.rerun()
+
+    lookback_days = lookback_options[st.session_state.frontier_lookback]
+
     # Compute efficient frontier
     with st.spinner("Computing optimal portfolios..."):
         frontier = compute_efficient_frontier(
             current_weights=current_weights,
             n_portfolios=10000,
+            lookback_days=lookback_days,
         )
 
     if frontier is None:

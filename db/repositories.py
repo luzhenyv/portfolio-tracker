@@ -282,12 +282,18 @@ class PriceRepository:
         self,
         asset_ids: list[int] | None = None,
         status: AssetStatus | None = None,
+        start_date: str | None = None,
     ) -> list[dict]:
         """
         Get price history for multiple assets (FR-5).
 
         Uses raw close prices for NAV/returns calculation.
         Dividends are tracked separately in the cash ledger.
+
+        Args:
+            asset_ids: Optional list of asset IDs to filter.
+            status: Optional asset status to filter.
+            start_date: Optional start date (YYYY-MM-DD) for filtering.
 
         Returns:
             List of dicts with [date, ticker, close].
@@ -307,6 +313,55 @@ class PriceRepository:
             stmt = stmt.where(Asset.id.in_(asset_ids))
         if status:
             stmt = stmt.where(Asset.status == status)
+        if start_date:
+            stmt = stmt.where(PriceDaily.date >= start_date)
+
+        stmt = stmt.order_by(PriceDaily.date)
+
+        results = self.session.execute(stmt).all()
+        return [
+            {
+                "date": r.date,
+                "asset_id": r.asset_id,
+                "ticker": r.ticker,
+                "close": r.close,
+            }
+            for r in results
+        ]
+
+    def get_price_history_for_tickers(
+        self,
+        tickers: list[str],
+        start_date: str | None = None,
+    ) -> list[dict]:
+        """
+        Get price history for specific tickers.
+
+        Args:
+            tickers: List of ticker symbols.
+            start_date: Optional start date (YYYY-MM-DD) for filtering.
+
+        Returns:
+            List of dicts with [date, ticker, close].
+        """
+        if not tickers:
+            return []
+
+        upper_tickers = [t.upper() for t in tickers]
+        stmt = (
+            select(
+                PriceDaily.date,
+                PriceDaily.asset_id,
+                Asset.ticker,
+                PriceDaily.close,
+            )
+            .join(Asset, PriceDaily.asset_id == Asset.id)
+            .where(PriceDaily.close.is_not(None))
+            .where(Asset.ticker.in_(upper_tickers))
+        )
+
+        if start_date:
+            stmt = stmt.where(PriceDaily.date >= start_date)
 
         stmt = stmt.order_by(PriceDaily.date)
 
