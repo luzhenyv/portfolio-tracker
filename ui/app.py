@@ -847,17 +847,18 @@ def render_admin_page():
         # Add Asset helper (if ticker doesn't exist)
         with st.expander("➕ Add New Asset to Track"):
             st.caption("Add a ticker before trading if it doesn't exist")
-            with st.form("add_asset_form", clear_on_submit=True):
+            with st.form("add_asset_form", clear_on_submit=True, border=False):
                 new_ticker_selection = st.text_input(
                     "Ticker Symbol",
                     placeholder="Enter new ticker (e.g. MSFT)",
                 )
                 new_ticker = new_ticker_selection.upper().strip() if new_ticker_selection else ""
 
-                asset_status = st.selectbox(
+                asset_status = st.text_input(
                     "Status",
-                    ["OWNED", "WATCHLIST"],
-                    index=0,
+                    value="WATCHLIST",
+                    help="Asset status: WATCHLIST",
+                    disabled=True,
                 )
 
                 asset_type = st.selectbox(
