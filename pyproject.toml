@@ -26,6 +26,7 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "plotly>=6.5.2",
     "psycopg[binary]",
+    "scipy>=1.11.0",
 ]
 
 [project.optional-dependencies]

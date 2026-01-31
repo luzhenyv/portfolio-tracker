@@ -15,10 +15,11 @@ from datetime import datetime, date
 
 from config import config
 from db import init_db, AssetStatus, AssetType
-from analytics.portfolio import compute_portfolio
+from analytics.portfolio import compute_portfolio, portfolio_weights
 from analytics.risk import compute_risk_metrics
 from analytics.valuation import run_valuation
 from analytics.performance import get_nav_period_returns, get_nav_series
+from analytics.optimizer import compute_efficient_frontier, PortfolioOptimizer
 from decision.engine import decision_engine
 from services.position_service import buy_position, sell_position
 from services.asset_service import create_asset_with_data, get_all_tickers
@@ -692,6 +693,266 @@ def render_positions_page():
             risk["correlation"].round(2),
         )
         st.caption("Correlation of daily returns. Lower correlation = better diversification.")
+
+    # Efficient Frontier Analysis
+    _render_efficient_frontier_section(portfolio_df, summary)
+
+
+def _render_efficient_frontier_section(portfolio_df: pd.DataFrame, summary: dict):
+    """
+    Render the Efficient Frontier visualization and rebalancing recommendations.
+
+    Shows:
+    - Scatter plot of risk/return with current and optimal portfolios marked
+    - Max Sharpe and Min Volatility portfolio details
+    - Rebalancing recommendations table
+    """
+    import plotly.graph_objects as go
+
+    # Get current portfolio weights
+    current_weights = portfolio_df.set_index("ticker")["net_weight"]
+
+    # Check if we have enough positions
+    if len(current_weights) < 2:
+        return
+
+    st.divider()
+    st.subheader("📊 Efficient Frontier Analysis")
+
+    # Compute efficient frontier
+    with st.spinner("Computing optimal portfolios..."):
+        frontier = compute_efficient_frontier(
+            current_weights=current_weights,
+            n_portfolios=500,
+        )
+
+    if frontier is None:
+        st.info("📊 Insufficient price history for frontier analysis (minimum 60 trading days required).")
+        return
+
+    # Create the efficient frontier chart
+    fig = go.Figure()
+
+    # Add random portfolios as scatter points (colored by Sharpe ratio)
+    fig.add_trace(
+        go.Scatter(
+            x=frontier.portfolios["volatility"],
+            y=frontier.portfolios["expected_return"],
+            mode="markers",
+            marker=dict(
+                size=6,
+                color=frontier.portfolios["sharpe_ratio"],
+                colorscale="Viridis",
+                showscale=True,
+                colorbar=dict(title="Sharpe<br>Ratio"),
+                opacity=0.7,
+            ),
+            name="Simulated Portfolios",
+            hovertemplate=(
+                "<b>Portfolio</b><br>"
+                + "Expected Return: %{y:.1%}<br>"
+                + "Volatility: %{x:.1%}<br>"
+                + "Sharpe Ratio: %{marker.color:.2f}<extra></extra>"
+            ),
+        )
+    )
+
+    # Add Max Sharpe Portfolio marker
+    fig.add_trace(
+        go.Scatter(
+            x=[frontier.max_sharpe_portfolio.volatility],
+            y=[frontier.max_sharpe_portfolio.expected_return],
+            mode="markers",
+            marker=dict(
+                symbol="star",
+                size=20,
+                color="red",
+                line=dict(width=2, color="white"),
+            ),
+            name=f"Max Sharpe ({frontier.max_sharpe_portfolio.sharpe_ratio:.2f})",
+            hovertemplate=(
+                "<b>Max Sharpe Portfolio ⭐</b><br>"
+                + f"Expected Return: {frontier.max_sharpe_portfolio.expected_return:.1%}<br>"
+                + f"Volatility: {frontier.max_sharpe_portfolio.volatility:.1%}<br>"
+                + f"Sharpe Ratio: {frontier.max_sharpe_portfolio.sharpe_ratio:.2f}<extra></extra>"
+            ),
+        )
+    )
+
+    # Add Min Volatility Portfolio marker
+    fig.add_trace(
+        go.Scatter(
+            x=[frontier.min_volatility_portfolio.volatility],
+            y=[frontier.min_volatility_portfolio.expected_return],
+            mode="markers",
+            marker=dict(
+                symbol="diamond",
+                size=16,
+                color="blue",
+                line=dict(width=2, color="white"),
+            ),
+            name=f"Min Volatility ({frontier.min_volatility_portfolio.volatility:.1%})",
+            hovertemplate=(
+                "<b>Min Volatility Portfolio 🛡️</b><br>"
+                + f"Expected Return: {frontier.min_volatility_portfolio.expected_return:.1%}<br>"
+                + f"Volatility: {frontier.min_volatility_portfolio.volatility:.1%}<br>"
+                + f"Sharpe Ratio: {frontier.min_volatility_portfolio.sharpe_ratio:.2f}<extra></extra>"
+            ),
+        )
+    )
+
+    # Add Current Portfolio marker
+    if frontier.current_portfolio:
+        fig.add_trace(
+            go.Scatter(
+                x=[frontier.current_portfolio.volatility],
+                y=[frontier.current_portfolio.expected_return],
+                mode="markers",
+                marker=dict(
+                    symbol="circle",
+                    size=18,
+                    color="orange",
+                    line=dict(width=3, color="white"),
+                ),
+                name=f"Your Portfolio ({frontier.current_portfolio.sharpe_ratio:.2f})",
+                hovertemplate=(
+                    "<b>Your Current Portfolio 📍</b><br>"
+                    + f"Expected Return: {frontier.current_portfolio.expected_return:.1%}<br>"
+                    + f"Volatility: {frontier.current_portfolio.volatility:.1%}<br>"
+                    + f"Sharpe Ratio: {frontier.current_portfolio.sharpe_ratio:.2f}<extra></extra>"
+                ),
+            )
+        )
+
+    fig.update_layout(
+        title=dict(
+            text="Efficient Frontier with Actual Stock Data",
+            font=dict(size=18),
+        ),
+        xaxis=dict(
+            title="Volatility (Risk)",
+            tickformat=".0%",
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+        ),
+        yaxis=dict(
+            title="Expected Return",
+            tickformat=".0%",
+            showgrid=True,
+            gridcolor="rgba(128,128,128,0.2)",
+        ),
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01,
+            bgcolor="rgba(255,255,255,0.8)",
+        ),
+        hovermode="closest",
+        height=500,
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Portfolio comparison metrics
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("**📍 Your Portfolio**")
+        if frontier.current_portfolio:
+            st.metric("Expected Return", f"{frontier.current_portfolio.expected_return:.1%}")
+            st.metric("Volatility", f"{frontier.current_portfolio.volatility:.1%}")
+            st.metric("Sharpe Ratio", f"{frontier.current_portfolio.sharpe_ratio:.2f}")
+        else:
+            st.info("No current portfolio data")
+
+    with col2:
+        st.markdown("**⭐ Max Sharpe Portfolio**")
+        st.metric("Expected Return", f"{frontier.max_sharpe_portfolio.expected_return:.1%}")
+        st.metric("Volatility", f"{frontier.max_sharpe_portfolio.volatility:.1%}")
+        st.metric("Sharpe Ratio", f"{frontier.max_sharpe_portfolio.sharpe_ratio:.2f}")
+
+    with col3:
+        st.markdown("**🛡️ Min Volatility Portfolio**")
+        st.metric("Expected Return", f"{frontier.min_volatility_portfolio.expected_return:.1%}")
+        st.metric("Volatility", f"{frontier.min_volatility_portfolio.volatility:.1%}")
+        st.metric("Sharpe Ratio", f"{frontier.min_volatility_portfolio.sharpe_ratio:.2f}")
+
+    # Rebalancing Recommendations
+    st.divider()
+    st.subheader("📋 Rebalancing Recommendations")
+    st.caption("Suggested trades to achieve the Max Sharpe Ratio portfolio allocation")
+
+    # Build recommendations table
+    current_shares = portfolio_df.set_index("ticker")["net_shares"]
+    current_prices = portfolio_df.set_index("ticker")["close"]
+    portfolio_value = summary.get("holdings_market_value", 0)
+
+    # Generate recommendations
+    optimizer = PortfolioOptimizer()
+    recommendations = optimizer.generate_rebalance_recommendations(
+        current_weights=current_weights,
+        current_shares=current_shares,
+        current_prices=current_prices,
+        target_portfolio=frontier.max_sharpe_portfolio,
+        portfolio_value=portfolio_value,
+        threshold=0.02,  # 2% threshold
+    )
+
+    if recommendations:
+        rebal_data = []
+        for rec in recommendations:
+            action_emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "⚪"}.get(rec.action, "")
+            rebal_data.append({
+                "Ticker": rec.ticker,
+                "Current %": f"{rec.current_weight:.1%}",
+                "Optimal %": f"{rec.optimal_weight:.1%}",
+                "Diff": f"{rec.weight_diff:+.1%}",
+                "Current Shares": f"{rec.current_shares:.0f}",
+                "Target Shares": f"{rec.target_shares:.1f}",
+                "Action": f"{action_emoji} {rec.action}",
+                "Trade Size": f"{abs(rec.shares_to_trade):.1f} shares",
+                "Est. Value": f"${abs(rec.trade_value):,.0f}",
+            })
+
+        rebal_df = pd.DataFrame(rebal_data)
+        st.dataframe(
+            rebal_df,
+            hide_index=True,
+            column_config={
+                "Ticker": st.column_config.TextColumn("Ticker"),
+                "Current %": st.column_config.TextColumn("Current %", help="Current portfolio weight"),
+                "Optimal %": st.column_config.TextColumn("Optimal %", help="Optimal weight for max Sharpe"),
+                "Diff": st.column_config.TextColumn("Diff", help="Weight difference"),
+                "Current Shares": st.column_config.TextColumn("Current Shares"),
+                "Target Shares": st.column_config.TextColumn("Target Shares"),
+                "Action": st.column_config.TextColumn("Action"),
+                "Trade Size": st.column_config.TextColumn("Trade Size"),
+                "Est. Value": st.column_config.TextColumn("Est. Value", help="Estimated trade value"),
+            },
+        )
+
+        # Summary of rebalancing
+        buys = [r for r in recommendations if r.action == "BUY"]
+        sells = [r for r in recommendations if r.action == "SELL"]
+
+        if buys or sells:
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+            with col1:
+                if buys:
+                    buy_total = sum(r.trade_value for r in buys)
+                    st.success(f"💰 Total to Buy: ${buy_total:,.0f}")
+            with col2:
+                if sells:
+                    sell_total = sum(abs(r.trade_value) for r in sells)
+                    st.warning(f"💵 Total to Sell: ${sell_total:,.0f}")
+
+    st.caption(
+        "⚠️ **Disclaimer:** These recommendations are based on historical data and Modern Portfolio Theory. "
+        "Past performance does not guarantee future results. Consider your investment goals, risk tolerance, "
+        "and tax implications before rebalancing."
+    )
 
 
 def get_current_cash_balance() -> float:

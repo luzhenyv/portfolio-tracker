@@ -185,6 +185,9 @@ class RiskConfig:
     
     # Minimum data points for reliable metrics
     min_price_history_days: int = 60
+    
+    # Risk-free rate for Sharpe ratio (annual, e.g., 0.04 = 4%)
+    risk_free_rate: float = 0.04
 
 
 @dataclass(frozen=True)

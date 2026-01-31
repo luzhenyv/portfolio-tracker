@@ -47,6 +47,14 @@ from analytics.benchmark import (
     compute_beta,
     compute_correlation,
 )
+from analytics.optimizer import (
+    PortfolioOptimizer,
+    OptimalPortfolio,
+    EfficientFrontierResult,
+    RebalanceRecommendation,
+    compute_efficient_frontier,
+    get_rebalance_recommendations,
+)
 
 __all__ = [
     # Portfolio
@@ -86,4 +94,11 @@ __all__ = [
     "compute_benchmark_comparison",
     "compute_beta",
     "compute_correlation",
+    # Optimizer
+    "PortfolioOptimizer",
+    "OptimalPortfolio",
+    "EfficientFrontierResult",
+    "RebalanceRecommendation",
+    "compute_efficient_frontier",
+    "get_rebalance_recommendations",
 ]
