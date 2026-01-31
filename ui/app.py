@@ -875,13 +875,18 @@ def render_admin_page():
                         # Validate ticker exists in yfinance before creating asset
                         with st.spinner(f"Validating {new_ticker}..."):
                             import yfinance as yf
+
                             try:
                                 ticker_obj = yf.Ticker(new_ticker)
                                 info = ticker_obj.info
-                                
+
                                 # Check if ticker has valid data
                                 # yfinance returns info with limited data for invalid tickers
-                                if not info or len(info) <= 5 or info.get("regularMarketPrice") is None:
+                                if (
+                                    not info
+                                    or len(info) <= 5
+                                    or info.get("regularMarketPrice") is None
+                                ):
                                     st.error(
                                         f"❌ **Ticker '{new_ticker}' not found**\n\n"
                                         f"The ticker symbol '{new_ticker}' does not exist in Yahoo Finance or has no price data.\n\n"
@@ -1330,11 +1335,13 @@ def render_watchlist_page():
     Render Watchlist & Valuation page with Yahoo-style metrics.
 
     Shows:
-    - Yahoo-aligned Valuation Measures table
-    - Yahoo-aligned Financial Highlights table
+    - Yahoo-aligned Valuation Measures table (read-only)
+    - Yahoo-aligned Financial Highlights table (read-only)
     - BUY/WAIT/AVOID signals
-    - All fields are editable with manual overrides saved to DB
+    - Multi-row selection for bulk delete
     """
+    from services.asset_service import delete_assets
+
     st.header("👀 Watchlist & Valuation")
 
     try:
@@ -1358,26 +1365,16 @@ def render_watchlist_page():
                 as_of_date = str(latest_update)[:10]
             st.caption(f"📅 Data as of: {as_of_date}")
 
-    # Store original for comparison
-    if "watchlist_original_df" not in st.session_state:
-        st.session_state.watchlist_original_df = valuation_df.copy()
-
-    # Check if data has refreshed (e.g., different asset_ids)
-    current_ids = set(valuation_df["asset_id"].tolist())
-    original_ids = set(st.session_state.watchlist_original_df["asset_id"].tolist())
-    if current_ids != original_ids:
-        st.session_state.watchlist_original_df = valuation_df.copy()
-
     # ====== VALUATION MEASURES TABLE ======
     st.subheader("📊 Valuation Measures")
 
-    # Create editor dataframe for valuation measures
-    vm_df = valuation_df[["ticker", "asset_id"]].copy()
+    # Create display dataframe for valuation measures
+    vm_df = valuation_df[["ticker"]].copy()
 
     # Large number fields for VM
     vm_large_fields = ["market_cap", "enterprise_value"]
 
-    # Add valuation measure columns with formatting helpers
+    # Add valuation measure columns with formatting
     for col in [
         "market_cap",
         "enterprise_value",
@@ -1409,45 +1406,14 @@ def render_watchlist_page():
 
     vm_df["valuation_action"] = valuation_df["valuation_action"].apply(format_signal)
 
-    # Add override flags
-    for col in [
-        "market_cap",
-        "enterprise_value",
-        "pe_trailing",
-        "pe_forward",
-        "peg",
-        "price_to_sales",
-        "price_to_book",
-        "ev_to_revenue",
-        "ev_ebitda",
-    ]:
-        flag_col = f"{col}_overridden"
-        if flag_col in valuation_df.columns:
-            vm_df[flag_col] = valuation_df[flag_col]
-        else:
-            vm_df[flag_col] = False
-
-    edited_vm_df = st.data_editor(
+    # Display with row selection
+    vm_event = st.dataframe(
         vm_df,
         hide_index=True,
-        disabled=["ticker", "asset_id", "valuation_action"]
-        + [
-            f"{c}_overridden"
-            for c in [
-                "market_cap",
-                "enterprise_value",
-                "pe_trailing",
-                "pe_forward",
-                "peg",
-                "price_to_sales",
-                "price_to_book",
-                "ev_to_revenue",
-                "ev_ebitda",
-            ]
-        ],
+        on_select="rerun",
+        selection_mode="multi-row",
         column_config={
-            "ticker": st.column_config.TextColumn("Ticker", pinned=True),
-            "asset_id": None,  # Hidden
+            "ticker": st.column_config.TextColumn("Ticker"),
             "market_cap": st.column_config.TextColumn(
                 "Market Cap",
                 help="Market Capitalization = Share Price × Shares Outstanding",
@@ -1491,32 +1457,67 @@ def render_watchlist_page():
                 "Signal",
                 help="BUY = attractive valuation | WAIT = mixed | AVOID = overvalued",
             ),
-            # Hide override flags
-            **{
-                f"{c}_overridden": None
-                for c in [
-                    "market_cap",
-                    "enterprise_value",
-                    "pe_trailing",
-                    "pe_forward",
-                    "peg",
-                    "price_to_sales",
-                    "price_to_book",
-                    "ev_to_revenue",
-                    "ev_ebitda",
-                ]
-            },
         },
-        key="valuation_measures_editor",
+        key="valuation_measures_table",
     )
+
+    # ====== BULK DELETE SELECTED ROWS ======
+    selected_rows = vm_event.selection.rows
+    if selected_rows:
+        st.divider()
+        st.subheader("🗑️ Delete Selected Assets")
+
+        # Get selected tickers
+        selected_tickers = [vm_df.iloc[idx]["ticker"] for idx in selected_rows]
+
+        st.warning(
+            f"⚠️ You have selected {len(selected_tickers)} asset(s): {', '.join(selected_tickers)}"
+        )
+        st.caption(
+            "This will delete these watchlist assets and all related data (prices, fundamentals, valuation metrics, notes)."
+        )
+        st.caption("Assets with active positions or trade history will be blocked by default.")
+
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("🗑️ Delete Selected", type="primary", key="delete_selected_btn"):
+                with st.spinner("Deleting assets..."):
+                    delete_result = delete_assets(
+                        tickers=selected_tickers,
+                        allow_owned=True,
+                        allow_with_trades=False,
+                        allow_with_active_position=False,
+                    )
+
+                # Display results
+                if delete_result.deleted:
+                    st.success(
+                        f"✅ Deleted {len(delete_result.deleted)} asset(s): {', '.join(delete_result.deleted)}"
+                    )
+
+                if delete_result.blocked:
+                    st.error("❌ Blocked deletions:")
+                    for block in delete_result.blocked:
+                        st.error(f"  • {block['ticker']}: {block['reason']}")
+
+                if delete_result.not_found:
+                    st.warning(f"⚠️ Not found: {', '.join(delete_result.not_found)}")
+
+                if delete_result.errors:
+                    st.error("❌ Errors:")
+                    for err in delete_result.errors:
+                        st.error(f"  • {err['ticker']}: {err['error']}")
+
+                time.sleep(1)
+                st.rerun()
 
     st.divider()
 
     # ====== FINANCIAL HIGHLIGHTS TABLE ======
     st.subheader("💰 Financial Highlights")
 
-    # Create editor dataframe for financial highlights
-    fh_df = valuation_df[["ticker", "asset_id"]].copy()
+    # Create display dataframe for financial highlights
+    fh_df = valuation_df[["ticker"]].copy()
 
     # Large number fields for FH
     fh_large_fields = [
@@ -1556,45 +1557,11 @@ def render_watchlist_page():
         else:
             fh_df[col] = None
 
-    # Add override flags
-    for col in [
-        "profit_margin",
-        "return_on_assets",
-        "return_on_equity",
-        "revenue_ttm",
-        "net_income_ttm",
-        "diluted_eps_ttm",
-        "total_cash",
-        "total_debt_to_equity",
-        "levered_free_cash_flow",
-    ]:
-        flag_col = f"{col}_overridden"
-        if flag_col in valuation_df.columns:
-            fh_df[flag_col] = valuation_df[flag_col]
-        else:
-            fh_df[flag_col] = False
-
-    edited_fh_df = st.data_editor(
+    st.dataframe(
         fh_df,
         hide_index=True,
-        disabled=["ticker", "asset_id"]
-        + [
-            f"{c}_overridden"
-            for c in [
-                "profit_margin",
-                "return_on_assets",
-                "return_on_equity",
-                "revenue_ttm",
-                "net_income_ttm",
-                "diluted_eps_ttm",
-                "total_cash",
-                "total_debt_to_equity",
-                "levered_free_cash_flow",
-            ]
-        ],
         column_config={
-            "ticker": st.column_config.TextColumn("Ticker", pinned=True),
-            "asset_id": None,  # Hidden
+            "ticker": st.column_config.TextColumn("Ticker"),
             # Profitability
             "profit_margin": st.column_config.NumberColumn(
                 "Profit Margin",
@@ -1639,46 +1606,9 @@ def render_watchlist_page():
                 "Levered FCF (ttm)",
                 help="Levered Free Cash Flow (trailing 12 months)",
             ),
-            # Hide override flags
-            **{
-                f"{c}_overridden": None
-                for c in [
-                    "profit_margin",
-                    "return_on_assets",
-                    "return_on_equity",
-                    "revenue_ttm",
-                    "net_income_ttm",
-                    "diluted_eps_ttm",
-                    "total_cash",
-                    "total_debt_to_equity",
-                    "levered_free_cash_flow",
-                ]
-            },
         },
-        key="financial_highlights_editor",
+        key="financial_highlights_table",
     )
-
-    # ====== DETECT AND SAVE CHANGES ======
-    original_df = st.session_state.watchlist_original_df
-    changes = _detect_valuation_changes(edited_vm_df, edited_fh_df, original_df, valuation_df)
-
-    if changes:
-        st.divider()
-        st.subheader("📝 Pending Changes")
-
-        for change in changes:
-            field_label = change["field"].replace("_", " ").title()
-            old_val = _format_change_value(change["old_value"], change["field"])
-            new_val = _format_change_value(change["new_value"], change["field"])
-            st.write(f"**{change['ticker']}** — {field_label}: {old_val} → {new_val}")
-
-        if st.button("💾 Save Changes", type="primary"):
-            _save_valuation_overrides(changes)
-            st.success("✅ Overrides saved successfully!")
-            # Clear the original to force refresh
-            del st.session_state.watchlist_original_df
-            time.sleep(0.5)
-            st.rerun()
 
     # Legend
     st.divider()
@@ -1688,34 +1618,10 @@ def render_watchlist_page():
     col3.markdown("🔴 **AVOID** — Multiple metrics suggest overvaluation")
 
     st.caption(
-        "💡 Edit any numeric cell to override auto-fetched values. "
-        "Overrides are saved and take precedence over yfinance data. "
-        "Missing data is displayed as empty cells; you can fill them manually."
+        "💡 Read-only view of valuation data fetched from Yahoo Finance. "
+        "Select rows in the Valuation Measures table to delete watchlist assets. "
+        "Edit valuations and overrides in the Admin page."
     )
-
-
-def _format_change_value(value: float | None, field: str) -> str:
-    """Format a change value for display."""
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return "—"
-
-    # Percentage fields
-    if field in ["profit_margin", "return_on_assets", "return_on_equity"]:
-        return f"{value:.2f}%"
-
-    # Large number fields
-    if field in [
-        "market_cap",
-        "enterprise_value",
-        "revenue_ttm",
-        "net_income_ttm",
-        "total_cash",
-        "levered_free_cash_flow",
-    ]:
-        return _format_large_number(value)
-
-    # Other fields
-    return f"{value:.2f}"
 
 
 def _format_large_number(value: float | None) -> str:
@@ -1736,236 +1642,6 @@ def _format_large_number(value: float | None) -> str:
         return f"{sign}{abs_val / 1e3:.2f}K"
     else:
         return f"{sign}{abs_val:.2f}"
-
-
-def _parse_large_number(value: str | float | None) -> float | None:
-    """Parse string with B/T notation (e.g., '1.45T') back to float."""
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-
-    if not isinstance(value, str):
-        return None
-
-    value = value.strip().upper()
-    if not value or value == "—":
-        return None
-
-    # Handle multipliers
-    multipliers = {"T": 1e12, "B": 1e9, "M": 1e6, "K": 1e3}
-
-    value = value.replace(",", "")
-
-    suffix = value[-1]
-    if suffix in multipliers:
-        try:
-            return float(value[:-1]) * multipliers[suffix]
-        except ValueError:
-            return None
-
-    try:
-        return float(value)
-    except ValueError:
-        return None
-
-
-def _detect_valuation_changes(
-    edited_vm_df: pd.DataFrame,
-    edited_fh_df: pd.DataFrame,
-    original_df: pd.DataFrame,
-    valuation_df: pd.DataFrame,
-) -> list[dict]:
-    """Detect changes between edited and original dataframes."""
-    changes = []
-
-    # Valuation measures fields
-    vm_fields = [
-        "market_cap",
-        "enterprise_value",
-        "pe_trailing",
-        "pe_forward",
-        "peg",
-        "price_to_sales",
-        "price_to_book",
-        "ev_to_revenue",
-        "ev_ebitda",
-    ]
-
-    # Financial highlights fields (note: percentages were multiplied by 100 for display)
-    fh_percentage_fields = ["profit_margin", "return_on_assets", "return_on_equity"]
-    fh_other_fields = [
-        "revenue_ttm",
-        "net_income_ttm",
-        "diluted_eps_ttm",
-        "total_cash",
-        "total_debt_to_equity",
-        "levered_free_cash_flow",
-    ]
-
-    for idx, row in edited_vm_df.iterrows():
-        asset_id = row["asset_id"]
-        ticker = row["ticker"]
-
-        # Find original values
-        orig_row = original_df[original_df["asset_id"] == asset_id]
-        if orig_row.empty:
-            continue
-
-        for field in vm_fields:
-            if field not in edited_vm_df.columns or field not in original_df.columns:
-                continue
-
-            new_val = row[field]
-            orig_val = orig_row.iloc[0][field]
-
-            # Parse large number if needed
-            if field in ["market_cap", "enterprise_value"]:
-                new_val = _parse_large_number(new_val)
-
-            if _values_differ(new_val, orig_val):
-                changes.append(
-                    {
-                        "asset_id": asset_id,
-                        "ticker": ticker,
-                        "field": field,
-                        "old_value": orig_val,
-                        "new_value": new_val,
-                    }
-                )
-
-    for idx, row in edited_fh_df.iterrows():
-        asset_id = row["asset_id"]
-        ticker = row["ticker"]
-
-        orig_row = original_df[original_df["asset_id"] == asset_id]
-        if orig_row.empty:
-            continue
-
-        # Percentage fields (need to convert back from display %)
-        for field in fh_percentage_fields:
-            if field not in edited_fh_df.columns or field not in original_df.columns:
-                continue
-
-            new_val_display = row[field]
-            # Convert back to decimal
-            new_val = new_val_display / 100 if pd.notna(new_val_display) else None
-            orig_val = orig_row.iloc[0][field]
-
-            if _values_differ(new_val, orig_val):
-                changes.append(
-                    {
-                        "asset_id": asset_id,
-                        "ticker": ticker,
-                        "field": field,
-                        "old_value": orig_val * 100 if pd.notna(orig_val) else None,
-                        "new_value": new_val_display,
-                    }
-                )
-
-        # Other fields
-        for field in fh_other_fields:
-            if field not in edited_fh_df.columns or field not in original_df.columns:
-                continue
-
-            new_val = row[field]
-            orig_val = orig_row.iloc[0][field]
-
-            # Parse large number if needed
-            if field in ["revenue_ttm", "net_income_ttm", "total_cash", "levered_free_cash_flow"]:
-                new_val = _parse_large_number(new_val)
-
-            if _values_differ(new_val, orig_val):
-                changes.append(
-                    {
-                        "asset_id": asset_id,
-                        "ticker": ticker,
-                        "field": field,
-                        "old_value": orig_val,
-                        "new_value": new_val,
-                    }
-                )
-
-    return changes
-
-
-def _values_differ(new_val, orig_val, tolerance: float = 0.001) -> bool:
-    """Check if two values differ (handling NaN)."""
-    if pd.isna(new_val) and pd.isna(orig_val):
-        return False
-    if pd.isna(new_val) != pd.isna(orig_val):
-        return True
-    if pd.notna(new_val) and pd.notna(orig_val):
-        return abs(new_val - orig_val) >= tolerance
-    return False
-
-
-def _save_valuation_overrides(changes: list[dict]):
-    """Save valuation override changes to database."""
-    from db import get_db
-    from db.repositories import ValuationOverrideRepository
-
-    db = get_db()
-    with db.session() as session:
-        override_repo = ValuationOverrideRepository(session)
-
-        # Group changes by asset_id
-        changes_by_asset: dict[int, dict] = {}
-        for change in changes:
-            asset_id = change["asset_id"]
-            if asset_id not in changes_by_asset:
-                changes_by_asset[asset_id] = {}
-
-            field = change["field"]
-            new_value = change["new_value"]
-
-            # Convert percentage display values back to decimals for storage
-            if field in ["profit_margin", "return_on_assets", "return_on_equity"]:
-                new_value = new_value / 100 if pd.notna(new_value) else None
-
-            changes_by_asset[asset_id][f"{field}_override"] = (
-                new_value if pd.notna(new_value) else None
-            )
-
-        for asset_id, field_updates in changes_by_asset.items():
-            # Get existing override to preserve other fields
-            existing = override_repo.get_by_asset_id(asset_id)
-
-            # Build kwargs with existing values
-            kwargs = {"asset_id": asset_id}
-
-            override_fields = [
-                "market_cap_override",
-                "enterprise_value_override",
-                "pe_trailing_override",
-                "pe_forward_override",
-                "peg_override",
-                "price_to_sales_override",
-                "price_to_book_override",
-                "ev_to_revenue_override",
-                "ev_ebitda_override",
-                "profit_margin_override",
-                "return_on_assets_override",
-                "return_on_equity_override",
-                "revenue_ttm_override",
-                "net_income_ttm_override",
-                "diluted_eps_ttm_override",
-                "total_cash_override",
-                "total_debt_to_equity_override",
-                "levered_free_cash_flow_override",
-            ]
-
-            for field in override_fields:
-                if field in field_updates:
-                    kwargs[field] = field_updates[field]
-                elif existing and hasattr(existing, field):
-                    kwargs[field] = getattr(existing, field)
-                else:
-                    kwargs[field] = None
-
-            override_repo.upsert(**kwargs)
-
-        session.commit()
 
 
 def render_notes_page():
