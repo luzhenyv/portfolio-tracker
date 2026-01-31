@@ -723,7 +723,7 @@ def _render_efficient_frontier_section(portfolio_df: pd.DataFrame, summary: dict
     with st.spinner("Computing optimal portfolios..."):
         frontier = compute_efficient_frontier(
             current_weights=current_weights,
-            n_portfolios=5000,
+            n_portfolios=10000,
         )
 
     if frontier is None:
@@ -1322,9 +1322,9 @@ def render_admin_page():
 
                         st.markdown(
                             f"**{action_emoji} {ticker}** / {trade.action.value} / "
-                            f"{int(trade.shares)} shares @ \${trade.price:.2f} / "
-                            f"Fees: \${trade.fees or 0:.2f} / "
-                            f"P&L: \${trade.realized_pnl or 0:.2f}"
+                            f"{int(trade.shares)} shares @ \\${trade.price:.2f} / "
+                            f"Fees: \\${trade.fees or 0:.2f} / "
+                            f"P&L: \\${trade.realized_pnl or 0:.2f}"
                         )
                         st.caption(f"ID: {trade_id} · {date_str}")
 

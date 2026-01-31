@@ -35,7 +35,7 @@ class DataFetcherConfig:
     yfinance_max_retries: int = 3
     
     # Default lookback period for initial fetch (days)
-    default_lookback_days: int = 365 * 2  # 2 years
+    default_lookback_days: int = 365 * 3  # 3 years
     
     # Rate limiting (seconds between requests)
     request_delay: float = 0.5
