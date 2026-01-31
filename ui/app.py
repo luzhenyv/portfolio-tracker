@@ -1446,7 +1446,7 @@ def render_watchlist_page():
             ]
         ],
         column_config={
-            "ticker": st.column_config.TextColumn("Ticker"),
+            "ticker": st.column_config.TextColumn("Ticker", pinned=True),
             "asset_id": None,  # Hidden
             "market_cap": st.column_config.TextColumn(
                 "Market Cap",
@@ -1593,7 +1593,7 @@ def render_watchlist_page():
             ]
         ],
         column_config={
-            "ticker": st.column_config.TextColumn("Ticker"),
+            "ticker": st.column_config.TextColumn("Ticker", pinned=True),
             "asset_id": None,  # Hidden
             # Profitability
             "profit_margin": st.column_config.NumberColumn(
