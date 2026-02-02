@@ -2586,7 +2586,7 @@ def render_charts_page():
         st.caption(traceback.format_exc())
 
 
-
+def render_notes_page():
     """
     Render Notes page for investment journal and research notes.
 
