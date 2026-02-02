@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Database files (local SQLite)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+db/portfolio.db*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Documentation (keep README.md as it's needed for package install)
+docs/
+
+# Backups
+backups/
+
+# Test files
+tests/
+*.test.py
+test_*.py
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Environment files
+.env
+.env.*
+
+# Logs
+*.log
+logs/

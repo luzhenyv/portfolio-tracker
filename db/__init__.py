@@ -28,6 +28,7 @@ from db.models import (
     Trade,  # Transaction history
     TradeAction,
     ValuationMetric,
+    ValuationMetricOverride,
     WatchlistTarget,
     asset_tags,
 )
@@ -66,6 +67,7 @@ __all__ = [
     "Trade",  # Transaction ledger
     "TradeAction",
     "ValuationMetric",
+    "ValuationMetricOverride",
     "WatchlistTarget",
     "asset_tags",
     # Session management
