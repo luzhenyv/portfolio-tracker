@@ -9,9 +9,12 @@ FR-15: Portfolio Overview, Positions Detail, Watchlist/Valuation View
 from typing import Literal, Optional
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 from config import config
 from db import init_db, AssetStatus, AssetType
@@ -20,6 +23,13 @@ from analytics.risk import compute_risk_metrics
 from analytics.valuation import run_valuation
 from analytics.performance import get_nav_period_returns, get_nav_series
 from analytics.optimizer import compute_efficient_frontier, PortfolioOptimizer
+from analytics.indicators import (
+    calculate_sma,
+    calculate_ema,
+    calculate_rsi,
+    calculate_macd,
+    calculate_bollinger_bands,
+)
 from decision.engine import decision_engine
 from services.position_service import buy_position, sell_position
 from services.asset_service import create_asset_with_data, get_all_tickers
@@ -84,7 +94,7 @@ def render_sidebar() -> str:
     st.sidebar.markdown("---")
 
     # Build page list based on config
-    pages = ["Overview", "Positions", "Watchlist", "Assets & Tags", "Notes"]
+    pages = ["Overview", "Positions", "Watchlist", "Charts", "Assets & Tags", "Notes"]
     if config.ui.enable_admin_ui:
         pages.append("Admin")
 
@@ -1896,7 +1906,687 @@ def _format_large_number(value: float | None) -> str:
         return f"{sign}{abs_val:.2f}"
 
 
-def render_notes_page():
+# ============================================================================
+# CHARTS PAGE
+# ============================================================================
+
+@st.cache_data(ttl=3600)
+def _fetch_ohlcv_data(ticker: str, start_date: str) -> pd.DataFrame:
+    """
+    Fetch OHLCV data for a ticker from the database.
+    
+    Falls back to yfinance direct fetch if not in database.
+    """
+    from db import get_db
+    from db.repositories import AssetRepository, PriceRepository, MarketIndexRepository, IndexPriceRepository
+    import yfinance as yf
+    
+    db = get_db()
+    
+    with db.session() as session:
+        # Try to find as asset first
+        asset_repo = AssetRepository(session)
+        price_repo = PriceRepository(session)
+        index_repo = MarketIndexRepository(session)
+        index_price_repo = IndexPriceRepository(session)
+        
+        asset = asset_repo.get_by_ticker(ticker)
+        
+        if asset:
+            # Fetch from prices_daily table
+            prices = price_repo.get_price_history(asset.id, start_date=start_date)
+            if prices:
+                records = [
+                    {
+                        "date": p.date,
+                        "open": p.open,
+                        "high": p.high,
+                        "low": p.low,
+                        "close": p.close,
+                        "volume": p.volume,
+                    }
+                    for p in prices
+                ]
+                df = pd.DataFrame(records)
+                df["date"] = pd.to_datetime(df["date"])
+                return df.set_index("date").sort_index()
+        
+        # Try as market index
+        index = index_repo.get_by_symbol(ticker)
+        if index:
+            prices = index_price_repo.get_price_history(index.id, start_date=start_date)
+            if prices:
+                records = [
+                    {
+                        "date": p.date,
+                        "open": p.open if hasattr(p, 'open') else p.close,
+                        "high": p.high if hasattr(p, 'high') else p.close,
+                        "low": p.low if hasattr(p, 'low') else p.close,
+                        "close": p.close,
+                        "volume": p.volume if hasattr(p, 'volume') else 0,
+                    }
+                    for p in prices
+                ]
+                df = pd.DataFrame(records)
+                df["date"] = pd.to_datetime(df["date"])
+                return df.set_index("date").sort_index()
+    
+    # Fallback: fetch directly from yfinance
+    try:
+        data = yf.download(
+            ticker,
+            start=start_date,
+            progress=False,
+            auto_adjust=False,
+            timeout=10,
+        )
+        if not data.empty:
+            # Handle multi-level columns
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+            
+            df = data[["Open", "High", "Low", "Close", "Volume"]].copy()
+            df.columns = ["open", "high", "low", "close", "volume"]
+            return df.sort_index()
+    except Exception:
+        pass
+    
+    return pd.DataFrame()
+
+
+def _get_available_tickers() -> dict[str, list[str]]:
+    """
+    Get categorized tickers (owned + watchlist + indices).
+    
+    Returns:
+        Dict with keys 'owned', 'watchlist', 'indices' mapping to ticker lists.
+    """
+    from db import get_db
+    from db.repositories import AssetRepository, MarketIndexRepository
+    
+    result = {
+        "owned": [],
+        "watchlist": [],
+        "indices": [],
+    }
+    db = get_db()
+    
+    with db.session() as session:
+        asset_repo = AssetRepository(session)
+        index_repo = MarketIndexRepository(session)
+        
+        # Get owned assets with names
+        owned = asset_repo.get_by_status(AssetStatus.OWNED)
+        result["owned"] = sorted(
+            [(a.ticker, a.name or a.ticker) for a in owned],
+            key=lambda x: x[0]
+        )
+        
+        # Get watchlist assets with names
+        watchlist = asset_repo.get_by_status(AssetStatus.WATCHLIST)
+        result["watchlist"] = sorted(
+            [(a.ticker, a.name or a.ticker) for a in watchlist],
+            key=lambda x: x[0]
+        )
+        
+        # Get market indices with names
+        indices = index_repo.get_all()
+        result["indices"] = sorted(
+            [(idx.symbol, idx.name or idx.symbol) for idx in indices],
+            key=lambda x: x[0]
+        )
+    
+    return result
+
+
+def _flatten_tickers(categorized: dict[str, list[tuple[str, str]]]) -> list[str]:
+    """Flatten categorized tickers into a single list of ticker symbols."""
+    all_tickers = []
+    for ticker, _ in categorized.get("owned", []):
+        all_tickers.append(ticker)
+    for ticker, _ in categorized.get("watchlist", []):
+        all_tickers.append(ticker)
+    for ticker, _ in categorized.get("indices", []):
+        all_tickers.append(ticker)
+    return all_tickers
+
+
+def _calculate_timeframe_start(timeframe: str) -> str:
+    """Calculate start date based on selected timeframe."""
+    today = datetime.now()
+    
+    if timeframe == "1D":
+        # For intraday, we still fetch daily data but just last day
+        start = today - timedelta(days=5)
+    elif timeframe == "1W":
+        start = today - timedelta(weeks=1)
+    elif timeframe == "1M":
+        start = today - timedelta(days=30)
+    elif timeframe == "3M":
+        start = today - timedelta(days=90)
+    elif timeframe == "6M":
+        start = today - timedelta(days=180)
+    elif timeframe == "1Y":
+        start = today - timedelta(days=365)
+    elif timeframe == "2Y":
+        start = today - timedelta(days=730)
+    else:  # "All"
+        start = today - timedelta(days=365 * 10)  # 10 years max
+    
+    return start.strftime("%Y-%m-%d")
+
+
+def _build_candlestick_chart(
+    df: pd.DataFrame,
+    ticker: str,
+    ticker_name: str,
+    show_sma: list[int],
+    show_ema: list[int],
+    show_bollinger: bool,
+    show_volume: bool,
+    show_rsi: bool,
+    show_macd: bool,
+) -> go.Figure:
+    """
+    Build interactive candlestick chart with technical indicators.
+    
+    Returns a Plotly figure with:
+    - Main candlestick chart with overlays (SMA, EMA, Bollinger)
+    - Volume subplot
+    - RSI subplot (if enabled)
+    - MACD subplot (if enabled)
+    """
+    # Determine number of rows for subplots
+    num_rows = 1  # Main chart
+    if show_volume:
+        num_rows += 1
+    if show_rsi:
+        num_rows += 1
+    if show_macd:
+        num_rows += 1
+    
+    # Calculate row heights
+    row_heights = [0.5]  # Main chart gets more space
+    if show_volume:
+        row_heights.append(0.1)
+    if show_rsi:
+        row_heights.append(0.15)
+    if show_macd:
+        row_heights.append(0.15)
+    
+    # Normalize heights
+    total = sum(row_heights)
+    row_heights = [h / total for h in row_heights]
+    
+    # Create subplots - use ticker and name in title
+    chart_title = f"{ticker}" if ticker == ticker_name else f"{ticker}"
+    subplot_titles = [f"{chart_title} Price"]
+    if show_volume:
+        subplot_titles.append("Volume")
+    if show_rsi:
+        subplot_titles.append("RSI (14)")
+    if show_macd:
+        subplot_titles.append("MACD (12,26,9)")
+    
+    fig = make_subplots(
+        rows=num_rows,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.03,
+        row_heights=row_heights,
+        subplot_titles=subplot_titles,
+    )
+    
+    # Format dates as strings to use with category x-axis (skips non-trading days)
+    date_strings = df.index.strftime("%Y-%m-%d")
+    
+    # Main candlestick chart
+    fig.add_trace(
+        go.Candlestick(
+            x=date_strings,
+            open=df["open"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            name="OHLC",
+            increasing_line_color="#26a69a",
+            decreasing_line_color="#ef5350",
+            increasing_fillcolor="#26a69a",
+            decreasing_fillcolor="#ef5350",
+        ),
+        row=1,
+        col=1,
+    )
+    
+    # SMA overlays
+    sma_colors = {20: "#ffa726", 50: "#42a5f5", 200: "#ab47bc"}
+    for period in show_sma:
+        if len(df) >= period:
+            sma = calculate_sma(df["close"], period)
+            fig.add_trace(
+                go.Scatter(
+                    x=date_strings,
+                    y=sma,
+                    name=f"SMA {period}",
+                    line=dict(color=sma_colors.get(period, "#888888"), width=1.5),
+                    hovertemplate=f"SMA {period}: %{{y:.2f}}<extra></extra>",
+                ),
+                row=1,
+                col=1,
+            )
+    
+    # EMA overlays
+    ema_colors = {12: "#66bb6a", 26: "#ec407a"}
+    for period in show_ema:
+        if len(df) >= period:
+            ema = calculate_ema(df["close"], period)
+            fig.add_trace(
+                go.Scatter(
+                    x=date_strings,
+                    y=ema,
+                    name=f"EMA {period}",
+                    line=dict(color=ema_colors.get(period, "#888888"), width=1.5, dash="dot"),
+                    hovertemplate=f"EMA {period}: %{{y:.2f}}<extra></extra>",
+                ),
+                row=1,
+                col=1,
+            )
+    
+    # Bollinger Bands
+    if show_bollinger and len(df) >= 20:
+        upper, middle, lower = calculate_bollinger_bands(df["close"])
+        
+        # Upper band
+        fig.add_trace(
+            go.Scatter(
+                x=date_strings,
+                y=upper,
+                name="BB Upper",
+                line=dict(color="rgba(128, 128, 128, 0.5)", width=1),
+                hovertemplate="BB Upper: %{y:.2f}<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+        
+        # Lower band
+        fig.add_trace(
+            go.Scatter(
+                x=date_strings,
+                y=lower,
+                name="BB Lower",
+                line=dict(color="rgba(128, 128, 128, 0.5)", width=1),
+                fill="tonexty",
+                fillcolor="rgba(128, 128, 128, 0.1)",
+                hovertemplate="BB Lower: %{y:.2f}<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+    
+    current_row = 2
+    
+    # Volume subplot
+    if show_volume:
+        # Color volume bars based on price direction
+        colors = [
+            "#26a69a" if df["close"].iloc[i] >= df["open"].iloc[i] else "#ef5350"
+            for i in range(len(df))
+        ]
+        
+        fig.add_trace(
+            go.Bar(
+                x=date_strings,
+                y=df["volume"],
+                name="Volume",
+                marker_color=colors,
+                opacity=0.7,
+                hovertemplate="Volume: %{y:,.0f}<extra></extra>",
+            ),
+            row=current_row,
+            col=1,
+        )
+        current_row += 1
+    
+    # RSI subplot
+    if show_rsi and len(df) >= 14:
+        rsi = calculate_rsi(df["close"])
+        
+        fig.add_trace(
+            go.Scatter(
+                x=date_strings,
+                y=rsi,
+                name="RSI",
+                line=dict(color="#7e57c2", width=1.5),
+                hovertemplate="RSI: %{y:.1f}<extra></extra>",
+            ),
+            row=current_row,
+            col=1,
+        )
+        
+        # RSI reference lines
+        fig.add_hline(y=70, line_dash="dash", line_color="red", opacity=0.5, row=current_row, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5, row=current_row, col=1)
+        fig.add_hline(y=50, line_dash="dot", line_color="gray", opacity=0.3, row=current_row, col=1)
+        
+        # Set RSI y-axis range
+        fig.update_yaxes(range=[0, 100], row=current_row, col=1)
+        current_row += 1
+    
+    # MACD subplot
+    if show_macd and len(df) >= 26:
+        macd_line, signal_line, histogram = calculate_macd(df["close"])
+        
+        # MACD histogram
+        hist_colors = ["#26a69a" if v >= 0 else "#ef5350" for v in histogram]
+        fig.add_trace(
+            go.Bar(
+                x=date_strings,
+                y=histogram,
+                name="MACD Histogram",
+                marker_color=hist_colors,
+                opacity=0.5,
+                hovertemplate="Histogram: %{y:.3f}<extra></extra>",
+            ),
+            row=current_row,
+            col=1,
+        )
+        
+        # MACD line
+        fig.add_trace(
+            go.Scatter(
+                x=date_strings,
+                y=macd_line,
+                name="MACD",
+                line=dict(color="#42a5f5", width=1.5),
+                hovertemplate="MACD: %{y:.3f}<extra></extra>",
+            ),
+            row=current_row,
+            col=1,
+        )
+        
+        # Signal line
+        fig.add_trace(
+            go.Scatter(
+                x=date_strings,
+                y=signal_line,
+                name="Signal",
+                line=dict(color="#ffa726", width=1.5),
+                hovertemplate="Signal: %{y:.3f}<extra></extra>",
+            ),
+            row=current_row,
+            col=1,
+        )
+        
+        # Zero line
+        fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5, row=current_row, col=1)
+    
+    # Update layout
+    fig.update_layout(
+        height=700,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            font=dict(size=10),
+        ),
+        margin=dict(l=50, r=50, t=80, b=50),
+        xaxis_rangeslider_visible=False,
+        hovermode="x unified",
+    )
+    
+    # Use category type for x-axis to skip non-trading days (weekends + holidays)
+    # This eliminates gaps in the chart by only showing dates with actual data
+    fig.update_xaxes(
+        type="category",
+        showgrid=True,
+        gridwidth=1,
+        gridcolor="rgba(128, 128, 128, 0.2)",
+        tickangle=-45,
+        nticks=20,  # Limit number of date labels for readability
+    )
+    
+    # Update y-axes
+    fig.update_yaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor="rgba(128, 128, 128, 0.2)",
+    )
+    
+    return fig
+
+
+def render_charts_page():
+    """
+    Render Technical Charts page.
+    
+    Shows:
+    - Ticker selector (owned + watchlist + indices)
+    - Timeframe selector
+    - Indicator toggles
+    - Interactive candlestick chart with overlays and subplots
+    """
+    st.header("📈 Technical Charts")
+    
+    # Initialize session state for chart preferences
+    if "chart_ticker" not in st.session_state:
+        st.session_state.chart_ticker = None
+    if "chart_timeframe" not in st.session_state:
+        st.session_state.chart_timeframe = "6M"
+    if "chart_sma" not in st.session_state:
+        st.session_state.chart_sma = [20, 50]
+    if "chart_ema" not in st.session_state:
+        st.session_state.chart_ema = []
+    if "chart_bollinger" not in st.session_state:
+        st.session_state.chart_bollinger = False
+    if "chart_volume" not in st.session_state:
+        st.session_state.chart_volume = True
+    if "chart_rsi" not in st.session_state:
+        st.session_state.chart_rsi = True
+    if "chart_macd" not in st.session_state:
+        st.session_state.chart_macd = True
+    
+    try:
+        categorized_tickers = _get_available_tickers()
+        all_tickers = _flatten_tickers(categorized_tickers)
+        
+        if not all_tickers:
+            st.warning("No tickers available. Add assets to your portfolio or watchlist first.")
+            return
+        
+        # Set default ticker if not set - prefer SPX (S&P 500) if available
+        if st.session_state.chart_ticker is None or st.session_state.chart_ticker not in all_tickers:
+            if "SPX" in all_tickers:
+                st.session_state.chart_ticker = "SPX"
+            else:
+                st.session_state.chart_ticker = all_tickers[0]
+        
+        # Build display options with category labels and names
+        ticker_options = []
+        ticker_to_display = {}
+        ticker_to_name = {}
+        display_to_ticker = {}
+        
+        # Add owned assets (tuple of ticker, name)
+        for ticker, name in categorized_tickers.get("owned", []):
+            display = f"📈 {ticker} — {name}" if name != ticker else f"📈 {ticker}"
+            ticker_options.append(display)
+            ticker_to_display[ticker] = display
+            ticker_to_name[ticker] = name
+            display_to_ticker[display] = ticker
+        
+        # Add watchlist assets
+        for ticker, name in categorized_tickers.get("watchlist", []):
+            display = f"👁 {ticker} — {name}" if name != ticker else f"👁 {ticker}"
+            ticker_options.append(display)
+            ticker_to_display[ticker] = display
+            ticker_to_name[ticker] = name
+            display_to_ticker[display] = ticker
+        
+        # Add indices
+        for ticker, name in categorized_tickers.get("indices", []):
+            display = f"📊 {ticker} — {name}" if name != ticker else f"📊 {ticker}"
+            ticker_options.append(display)
+            ticker_to_display[ticker] = display
+            ticker_to_name[ticker] = name
+            display_to_ticker[display] = ticker
+        
+        # Get current display value
+        current_display = ticker_to_display.get(
+            st.session_state.chart_ticker, 
+            ticker_options[0] if ticker_options else None
+        )
+        
+        # Controls row
+        col1, col2 = st.columns([1, 3])
+        
+        with col1:
+            # Ticker selector with categorized display
+            selected_display = st.selectbox(
+                "Ticker",
+                options=ticker_options,
+                index=ticker_options.index(current_display) if current_display in ticker_options else 0,
+                placeholder="Select Ticker ...",
+                key="ticker_select",
+                help="📈 Owned | 👁 Watchlist | 📊 Index",
+            )
+            selected_ticker = display_to_ticker.get(selected_display, all_tickers[0])
+            selected_name = ticker_to_name.get(selected_ticker, selected_ticker)
+            st.session_state.chart_ticker = selected_ticker
+        
+        with col2:
+            # Timeframe pills
+            timeframes = ["1W", "1M", "3M", "6M", "1Y", "2Y", "All"]
+            selected_timeframe = st.pills(
+                "Timeframe",
+                options=timeframes,
+                default=st.session_state.chart_timeframe,
+                key="timeframe_pills",
+            )
+            if selected_timeframe:
+                st.session_state.chart_timeframe = selected_timeframe
+        
+        # Indicator controls in expander
+        with st.expander("📊 Indicator Settings", expanded=False):
+            ind_col1, ind_col2, ind_col3 = st.columns(3)
+            
+            with ind_col1:
+                st.markdown("**Moving Averages**")
+                sma_options = st.multiselect(
+                    "SMA Periods",
+                    options=[20, 50, 200],
+                    default=st.session_state.chart_sma,
+                    key="sma_select",
+                )
+                st.session_state.chart_sma = sma_options
+                
+                ema_options = st.multiselect(
+                    "EMA Periods",
+                    options=[12, 26],
+                    default=st.session_state.chart_ema,
+                    key="ema_select",
+                )
+                st.session_state.chart_ema = ema_options
+            
+            with ind_col2:
+                st.markdown("**Bands & Volume**")
+                show_bollinger = st.checkbox(
+                    "Bollinger Bands (20,2)",
+                    value=st.session_state.chart_bollinger,
+                    key="bollinger_check",
+                )
+                st.session_state.chart_bollinger = show_bollinger
+                
+                show_volume = st.checkbox(
+                    "Volume",
+                    value=st.session_state.chart_volume,
+                    key="volume_check",
+                )
+                st.session_state.chart_volume = show_volume
+            
+            with ind_col3:
+                st.markdown("**Oscillators**")
+                show_rsi = st.checkbox(
+                    "RSI (14)",
+                    value=st.session_state.chart_rsi,
+                    key="rsi_check",
+                )
+                st.session_state.chart_rsi = show_rsi
+                
+                show_macd = st.checkbox(
+                    "MACD (12,26,9)",
+                    value=st.session_state.chart_macd,
+                    key="macd_check",
+                )
+                st.session_state.chart_macd = show_macd
+        
+        # Calculate start date based on timeframe
+        start_date = _calculate_timeframe_start(st.session_state.chart_timeframe)
+        
+        # Fetch data
+        with st.spinner(f"Loading {selected_ticker} data..."):
+            df = _fetch_ohlcv_data(selected_ticker, start_date)
+        
+        if df.empty:
+            st.error(f"No price data available for {selected_ticker}. Try syncing prices in the Admin page.")
+            return
+        
+        # Display asset/index name as subheader
+        st.subheader(f"{selected_ticker} — {selected_name}")
+        
+        # Display current price info
+        if len(df) >= 2:
+            latest = df.iloc[-1]
+            prev = df.iloc[-2]
+            price_change = latest["close"] - prev["close"]
+            pct_change = (price_change / prev["close"]) * 100
+            
+            info_col1, info_col2, info_col3, info_col4 = st.columns(4)
+            
+            with info_col1:
+                st.metric(
+                    "Close",
+                    f"${latest['close']:.2f}",
+                    f"{price_change:+.2f} ({pct_change:+.2f}%)",
+                )
+            with info_col2:
+                st.metric("Open", f"${latest['open']:.2f}")
+            with info_col3:
+                st.metric("High", f"${latest['high']:.2f}")
+            with info_col4:
+                st.metric("Low", f"${latest['low']:.2f}")
+        
+        # Build and display chart
+        fig = _build_candlestick_chart(
+            df=df,
+            ticker=selected_ticker,
+            ticker_name=selected_name,
+            show_sma=st.session_state.chart_sma,
+            show_ema=st.session_state.chart_ema,
+            show_bollinger=st.session_state.chart_bollinger,
+            show_volume=st.session_state.chart_volume,
+            show_rsi=st.session_state.chart_rsi,
+            show_macd=st.session_state.chart_macd,
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Data summary
+        st.caption(
+            f"📅 Showing {len(df)} trading days from {df.index[0].strftime('%Y-%m-%d')} "
+            f"to {df.index[-1].strftime('%Y-%m-%d')}"
+        )
+        
+    except Exception as e:
+        st.error(f"Error loading chart: {e}")
+        import traceback
+        st.caption(traceback.format_exc())
+
+
+
     """
     Render Notes page for investment journal and research notes.
 
@@ -2676,6 +3366,8 @@ def main():
         render_positions_page()
     elif page == "Watchlist":
         render_watchlist_page()
+    elif page == "Charts":
+        render_charts_page()
     elif page == "Assets & Tags":
         render_assets_tags_page()
     elif page == "Notes":
