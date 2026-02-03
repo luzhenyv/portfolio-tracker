@@ -3084,8 +3084,8 @@ def render_assets_tags_page():
 
         # --- Asset List with Tag Editing ---
         st.caption(f"**{len(assets_list)} Assets**")
-        with st.container(height=400, border=False):
-            if assets_list:
+        if assets_list:
+            with st.container(height=400, border=False):
                 for asset in assets_list:
                     with st.container(border=True):
                         col_info, col_tags, col_actions = st.columns([2, 4, 1])
@@ -3161,8 +3161,8 @@ def render_assets_tags_page():
                                 del st.session_state[f"deleting_asset_{asset.id}"]
                                 st.rerun()
 
-            else:
-                st.info("No assets match the current filters.")
+        else:
+            st.info("No assets match the current filters.")
 
         st.divider()
 
