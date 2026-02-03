@@ -1066,7 +1066,6 @@ def render_admin_page():
             # Trade date and time inputs
             trade_at = st.datetime_input(
                 "Trade Date & Time",
-                value=datetime.now(),
                 help="Date and time of trade execution",
             )
 
@@ -1175,7 +1174,6 @@ def render_admin_page():
 
             cash_date = st.datetime_input(
                 "Transaction Date & Time",
-                value=datetime.now(),
                 help="Date & time of cash transaction",
             )
 
