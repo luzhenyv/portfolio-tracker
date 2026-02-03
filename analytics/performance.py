@@ -380,20 +380,24 @@ class PerformanceAnalyzer:
         Args:
             cash_repo: CashRepository instance
             calendar: Full date range to fill
-            start_date: Start of range
-            end_date: End of range
+            start_date: Start of range (YYYY-MM-DD string)
+            end_date: End of range (YYYY-MM-DD string)
 
         Returns:
             DataFrame with columns [date, cash]
         """
+        # Convert string dates to datetime for repository calls
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+
         # Get opening balance before start_date
-        initial_cash = cash_repo.get_balance(as_of_date=start_date)
+        initial_cash = cash_repo.get_balance(as_of_date=start_dt)
         # Subtract transactions on start_date to get opening balance
-        start_txns = cash_repo.list_all_chronological(start_date, start_date)
+        start_txns = cash_repo.list_all_chronological(start_dt, start_dt)
         for tx in start_txns:
             initial_cash -= tx.amount
 
-        cash_by_date = cash_repo.get_daily_balances(start_date, end_date)
+        cash_by_date = cash_repo.get_daily_balances(start_dt, end_dt)
         return self._forward_fill_cash(cash_by_date, calendar, initial_cash)
 
     def _merge_positions_prices(

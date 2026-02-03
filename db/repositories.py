@@ -1503,7 +1503,7 @@ class CashRepository:
 
     def get_balance(
         self,
-        as_of_date: str | None = None,
+        as_of_date: datetime | None = None,
     ) -> float:
         """
         Calculate cash balance as of a given date.
@@ -1525,8 +1525,8 @@ class CashRepository:
 
     def get_summary(
         self,
-        start_date: str | None = None,
-        end_date: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
     ) -> dict:
         """
         Get cash flow summary for a period.
@@ -1572,8 +1572,8 @@ class CashRepository:
 
     def get_balance_by_type(
         self,
-        start_date: str | None = None,
-        end_date: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
     ) -> dict[str, float]:
         """
         Get cash flow breakdown by transaction type.
@@ -1597,8 +1597,8 @@ class CashRepository:
 
     def get_ledger(
         self,
-        start_date: str | None = None,
-        end_date: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
         limit: int | None = None,
         sort_desc: bool = True,
     ) -> list[dict]:
@@ -1657,9 +1657,9 @@ class CashRepository:
 
     def get_daily_balances(
         self,
-        start_date: str | None = None,
-        end_date: str | None = None,
-    ) -> dict[str, float]:
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> dict[datetime, float]:
         """
         Get end-of-day cash balance for each date with transactions.
 
@@ -1671,7 +1671,7 @@ class CashRepository:
             end_date: Optional end date (inclusive)
 
         Returns:
-            Dict mapping date string to EOD cash balance
+            Dict mapping datetime to EOD cash balance
         """
         # Get starting balance before the period
         starting_balance = 0.0
@@ -1710,8 +1710,8 @@ class CashRepository:
 
     def list_all_chronological(
         self,
-        start_date: str | None = None,
-        end_date: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
     ) -> Sequence[CashTransaction]:
         """
         Get all cash transactions in chronological order.

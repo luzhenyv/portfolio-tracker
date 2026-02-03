@@ -283,16 +283,21 @@ def cmd_pnl(args):
 
 def cmd_cash(args):
     """Show cash position and ledger."""
+    from datetime import datetime
     from db.repositories import CashRepository
 
     db = init_db()
+
+    # Convert string dates to datetime
+    start_dt = datetime.strptime(args.since, "%Y-%m-%d") if args.since else None
+    end_dt = datetime.strptime(args.until, "%Y-%m-%d") if args.until else None
 
     with db.session() as session:
         cash_repo = CashRepository(session)
 
         summary = cash_repo.get_summary(
-            start_date=args.since,
-            end_date=args.until,
+            start_date=start_dt,
+            end_date=end_dt,
         )
 
         print("\n💵 Cash Summary")
@@ -306,8 +311,8 @@ def cmd_cash(args):
 
         # Show breakdown by type
         by_type = cash_repo.get_balance_by_type(
-            start_date=args.since,
-            end_date=args.until,
+            start_date=start_dt,
+            end_date=end_dt,
         )
 
         if by_type:
@@ -319,8 +324,8 @@ def cmd_cash(args):
         # Show recent transactions
         if args.ledger:
             ledger = cash_repo.get_ledger(
-                start_date=args.since,
-                end_date=args.until,
+                start_date=start_dt,
+                end_date=end_dt,
                 limit=args.limit,
             )
 
