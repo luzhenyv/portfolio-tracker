@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Optional
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Column,
     DateTime,
@@ -182,7 +183,7 @@ class PriceDaily(Base):
     low: Mapped[Optional[float]] = mapped_column(Float)
     close: Mapped[Optional[float]] = mapped_column(Float)
     adjusted_close: Mapped[Optional[float]] = mapped_column(Float)
-    volume: Mapped[Optional[int]] = mapped_column(Integer)
+    volume: Mapped[Optional[BigInteger]] = mapped_column(BigInteger)
 
     # Relationships
     asset: Mapped["Asset"] = relationship("Asset", back_populates="prices")
@@ -742,7 +743,7 @@ class IndexPriceDaily(Base):
     high: Mapped[Optional[float]] = mapped_column(Float)
     low: Mapped[Optional[float]] = mapped_column(Float)
     close: Mapped[Optional[float]] = mapped_column(Float)
-    volume: Mapped[Optional[int]] = mapped_column(Integer)
+    volume: Mapped[Optional[BigInteger]] = mapped_column(BigInteger)
 
     # Relationships
     index: Mapped["MarketIndex"] = relationship("MarketIndex", back_populates="prices")
